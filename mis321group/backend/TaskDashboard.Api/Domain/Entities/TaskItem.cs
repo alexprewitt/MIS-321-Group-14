@@ -4,7 +4,8 @@ public enum TaskPriority
 {
     Low = 0,
     Medium = 1,
-    High = 2
+    High = 2,
+    Urgent = 3
 }
 
 public enum TaskItemStatus
@@ -25,8 +26,8 @@ public class TaskItem
     public TaskItemStatus Status { get; set; }
 
     public int ProjectId { get; set; }
-    public Project? Project { get; set; }
 
     // Always store timestamps in UTC.
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

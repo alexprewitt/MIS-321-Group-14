@@ -35,7 +35,7 @@ public class TasksController(SqlConnectionFactory connectionFactory) : Controlle
             var filters = new List<string>();
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = """
-                SELECT t.Id, t.Title, t.Description, t.Priority, t.DueDate, t.Status, t.ProjectId, t.CreatedAt, p.Name AS ProjectName
+                SELECT t.Id, t.Title, t.Description, t.Priority, t.DueDate, t.Status, t.ProjectId, t.CreatedAt, t.UpdatedAt, p.Name AS ProjectName
                 FROM Tasks t
                 JOIN Projects p ON p.Id = t.ProjectId
                 """;
@@ -57,10 +57,12 @@ public class TasksController(SqlConnectionFactory connectionFactory) : Controlle
             }
             if (focusMode)
             {
-                filters.Add("(t.Status <> @doneStatus AND (t.Priority = @highPriority OR (t.DueDate IS NOT NULL AND t.DueDate <= @dueSoon)))");
+                var endOfToday = DateTime.UtcNow.Date.AddDays(1).AddTicks(-1);
+                filters.Add("(t.Status <> @doneStatus AND t.DueDate IS NOT NULL AND t.DueDate <= @endOfToday AND (t.Priority = @highPriority OR t.Priority = @urgentPriority))");
                 cmd.Parameters.AddWithValue("@doneStatus", (int)TaskItemStatus.Done);
                 cmd.Parameters.AddWithValue("@highPriority", (int)TaskPriority.High);
-                cmd.Parameters.AddWithValue("@dueSoon", DateTime.UtcNow.AddDays(3));
+                cmd.Parameters.AddWithValue("@urgentPriority", (int)TaskPriority.Urgent);
+                cmd.Parameters.AddWithValue("@endOfToday", endOfToday);
             }
             if (filters.Count > 0)
             {
@@ -101,7 +103,7 @@ public class TasksController(SqlConnectionFactory connectionFactory) : Controlle
         await conn.OpenAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT t.Id, t.Title, t.Description, t.Priority, t.DueDate, t.Status, t.ProjectId, t.CreatedAt, p.Name AS ProjectName
+            SELECT t.Id, t.Title, t.Description, t.Priority, t.DueDate, t.Status, t.ProjectId, t.CreatedAt, t.UpdatedAt, p.Name AS ProjectName
             FROM Tasks t
             JOIN Projects p ON p.Id = t.ProjectId
             WHERE t.Status <> @doneStatus
@@ -130,6 +132,7 @@ public class TasksController(SqlConnectionFactory connectionFactory) : Controlle
             ProjectId = reader.GetInt32("ProjectId"),
             ProjectName = reader.GetString("ProjectName"),
             CreatedAt = reader.GetDateTime("CreatedAt"),
+            UpdatedAt = reader.GetDateTime("UpdatedAt"),
             IsDueSoon = dueDate.HasValue && dueDate.Value <= DateTime.UtcNow.AddDays(3)
         });
     }
@@ -185,11 +188,16 @@ public class TasksController(SqlConnectionFactory connectionFactory) : Controlle
             return BadRequest(new { error = "Request body is required." });
         }
 
-        var validationError = RequestValidators.ValidateTaskBody(
-            request.Title,
-            request.ProjectId,
-            request.Description,
-            request.DueDate);
+        if (!TryParsePriority(request.Priority, out var parsedPriority, out var priorityError))
+        {
+            return BadRequest(new { error = priorityError });
+        }
+        if (!TryParseStatus(request.Status, out var parsedStatus, out var statusError))
+        {
+            return BadRequest(new { error = statusError });
+        }
+
+        var validationError = RequestValidators.ValidateTaskBody(request.Title, request.ProjectId, request.Description, request.DueDate);
         if (validationError is not null)
         {
             return BadRequest(new { error = validationError });
@@ -204,21 +212,23 @@ public class TasksController(SqlConnectionFactory connectionFactory) : Controlle
         try
         {
             var createdAt = DateTime.UtcNow;
+            var updatedAt = createdAt;
             await using var conn = connectionFactory.CreateConnection();
             await conn.OpenAsync();
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = """
-                INSERT INTO Tasks (Title, Description, Priority, DueDate, Status, ProjectId, CreatedAt)
-                VALUES (@title, @description, @priority, @dueDate, @status, @projectId, @createdAt);
+                INSERT INTO Tasks (Title, Description, Priority, DueDate, Status, ProjectId, CreatedAt, UpdatedAt)
+                VALUES (@title, @description, @priority, @dueDate, @status, @projectId, @createdAt, @updatedAt);
                 SELECT LAST_INSERT_ID();
                 """;
             cmd.Parameters.AddWithValue("@title", request.Title!.Trim());
             cmd.Parameters.AddWithValue("@description", string.IsNullOrWhiteSpace(request.Description) ? DBNull.Value : request.Description.Trim());
-            cmd.Parameters.AddWithValue("@priority", (int)request.Priority);
+            cmd.Parameters.AddWithValue("@priority", (int)parsedPriority);
             cmd.Parameters.AddWithValue("@dueDate", request.DueDate.HasValue ? request.DueDate.Value : DBNull.Value);
-            cmd.Parameters.AddWithValue("@status", (int)request.Status);
+            cmd.Parameters.AddWithValue("@status", (int)parsedStatus);
             cmd.Parameters.AddWithValue("@projectId", request.ProjectId);
             cmd.Parameters.AddWithValue("@createdAt", createdAt);
+            cmd.Parameters.AddWithValue("@updatedAt", updatedAt);
 
             var newId = Convert.ToInt32(await cmd.ExecuteScalarAsync());
             var createdTask = await GetTaskByIdAsync(newId);
@@ -238,11 +248,16 @@ public class TasksController(SqlConnectionFactory connectionFactory) : Controlle
             return BadRequest(new { error = "Request body is required." });
         }
 
-        var validationError = RequestValidators.ValidateTaskBody(
-            request.Title,
-            request.ProjectId,
-            request.Description,
-            request.DueDate);
+        if (!TryParsePriority(request.Priority, out var parsedPriority, out var priorityError))
+        {
+            return BadRequest(new { error = priorityError });
+        }
+        if (!TryParseStatus(request.Status, out var parsedStatus, out var statusError))
+        {
+            return BadRequest(new { error = statusError });
+        }
+
+        var validationError = RequestValidators.ValidateTaskBody(request.Title, request.ProjectId, request.Description, request.DueDate);
         if (validationError is not null)
         {
             return BadRequest(new { error = validationError });
@@ -259,18 +274,20 @@ public class TasksController(SqlConnectionFactory connectionFactory) : Controlle
             await using var conn = connectionFactory.CreateConnection();
             await conn.OpenAsync();
             await using var cmd = conn.CreateCommand();
+            var updatedAt = DateTime.UtcNow;
             cmd.CommandText = """
                 UPDATE Tasks
-                SET Title = @title, Description = @description, Priority = @priority, DueDate = @dueDate, Status = @status, ProjectId = @projectId
+                SET Title = @title, Description = @description, Priority = @priority, DueDate = @dueDate, Status = @status, ProjectId = @projectId, UpdatedAt = @updatedAt
                 WHERE Id = @id;
                 """;
             cmd.Parameters.AddWithValue("@id", id);
             cmd.Parameters.AddWithValue("@title", request.Title!.Trim());
             cmd.Parameters.AddWithValue("@description", string.IsNullOrWhiteSpace(request.Description) ? DBNull.Value : request.Description.Trim());
-            cmd.Parameters.AddWithValue("@priority", (int)request.Priority);
+            cmd.Parameters.AddWithValue("@priority", (int)parsedPriority);
             cmd.Parameters.AddWithValue("@dueDate", request.DueDate.HasValue ? request.DueDate.Value : DBNull.Value);
-            cmd.Parameters.AddWithValue("@status", (int)request.Status);
+            cmd.Parameters.AddWithValue("@status", (int)parsedStatus);
             cmd.Parameters.AddWithValue("@projectId", request.ProjectId);
+            cmd.Parameters.AddWithValue("@updatedAt", updatedAt);
 
             var changed = await cmd.ExecuteNonQueryAsync();
             if (changed == 0)
@@ -314,9 +331,9 @@ public class TasksController(SqlConnectionFactory connectionFactory) : Controlle
     {
         public string Title { get; set; } = string.Empty;
         public string? Description { get; set; }
-        public TaskPriority Priority { get; set; } = TaskPriority.Medium;
+        public string Priority { get; set; } = "medium";
         public DateTime? DueDate { get; set; }
-        public TaskItemStatus Status { get; set; } = TaskItemStatus.Todo;
+        public string Status { get; set; } = "todo";
         public int ProjectId { get; set; }
     }
 
@@ -392,7 +409,7 @@ public class TasksController(SqlConnectionFactory connectionFactory) : Controlle
         await conn.OpenAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT t.Id, t.Title, t.Description, t.Priority, t.DueDate, t.Status, t.ProjectId, t.CreatedAt, p.Name AS ProjectName
+            SELECT t.Id, t.Title, t.Description, t.Priority, t.DueDate, t.Status, t.ProjectId, t.CreatedAt, t.UpdatedAt, p.Name AS ProjectName
             FROM Tasks t
             JOIN Projects p ON p.Id = t.ProjectId
             WHERE t.Id = @id;
@@ -421,7 +438,55 @@ public class TasksController(SqlConnectionFactory connectionFactory) : Controlle
             Status = ((TaskItemStatus)reader.GetInt32("Status")).ToString(),
             ProjectId = reader.GetInt32("ProjectId"),
             ProjectName = reader.GetString("ProjectName"),
-            CreatedAt = reader.GetDateTime("CreatedAt")
+            CreatedAt = reader.GetDateTime("CreatedAt"),
+            UpdatedAt = reader.GetDateTime("UpdatedAt")
         };
+    }
+
+    private static bool TryParsePriority(string? value, out TaskPriority priority, out string? error)
+    {
+        error = null;
+        switch ((value ?? string.Empty).Trim().ToLowerInvariant())
+        {
+            case "low":
+                priority = TaskPriority.Low;
+                return true;
+            case "medium":
+                priority = TaskPriority.Medium;
+                return true;
+            case "high":
+                priority = TaskPriority.High;
+                return true;
+            case "urgent":
+                priority = TaskPriority.Urgent;
+                return true;
+            default:
+                priority = TaskPriority.Medium;
+                error = "Priority must be one of: low, medium, high, urgent.";
+                return false;
+        }
+    }
+
+    private static bool TryParseStatus(string? value, out TaskItemStatus status, out string? error)
+    {
+        error = null;
+        var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
+        switch (normalized)
+        {
+            case "todo":
+                status = TaskItemStatus.Todo;
+                return true;
+            case "inprogress":
+            case "in-progress":
+                status = TaskItemStatus.InProgress;
+                return true;
+            case "done":
+                status = TaskItemStatus.Done;
+                return true;
+            default:
+                status = TaskItemStatus.Todo;
+                error = "Status must be one of: todo, in-progress, done.";
+                return false;
+        }
     }
 }

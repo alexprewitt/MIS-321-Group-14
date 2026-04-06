@@ -43,7 +43,10 @@ builder.Services.AddScoped<IAiService>(sp => sp.GetRequiredService<OpenAiAiServi
 var app = builder.Build();
 await EnsureDatabaseAsync(app.Services);
 
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 app.UseCors("FrontendClient");
 app.MapControllers();
 
@@ -78,8 +81,24 @@ static async Task EnsureDatabaseAsync(IServiceProvider services)
               Status INT NOT NULL,
               ProjectId INT NOT NULL,
               CreatedAt DATETIME NOT NULL,
+              UpdatedAt DATETIME NOT NULL,
               CONSTRAINT FK_Tasks_Projects FOREIGN KEY (ProjectId) REFERENCES Projects (Id) ON DELETE CASCADE
             );
+            """;
+        const string alterTasksSql = """
+            ALTER TABLE Tasks
+            ADD COLUMN UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP;
+            """;
+        const string hasUpdatedAtSql = """
+            SELECT COUNT(1)
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'Tasks'
+              AND COLUMN_NAME = 'UpdatedAt';
+            """;
+        const string backfillUpdatedAtSql = """
+            UPDATE Tasks
+            SET UpdatedAt = CreatedAt;
             """;
         const string seedProjectsSql = """
             INSERT INTO Projects (Id, Name, Description, Category)
@@ -91,16 +110,16 @@ static async Task EnsureDatabaseAsync(IServiceProvider services)
             WHERE NOT EXISTS (SELECT 1 FROM Projects WHERE Id = 2);
             """;
         const string seedTasksSql = """
-            INSERT INTO Tasks (Id, Title, Description, Priority, DueDate, Status, ProjectId, CreatedAt)
-            SELECT 1, 'Draft project plan', 'Outline goals, milestones, and dashboard structure.', 1, '2026-03-25 17:00:00', 0, 1, '2026-03-23 09:00:00'
+            INSERT INTO Tasks (Id, Title, Description, Priority, DueDate, Status, ProjectId, CreatedAt, UpdatedAt)
+            SELECT 1, 'Draft project plan', 'Outline goals, milestones, and dashboard structure.', 1, '2026-03-25 17:00:00', 0, 1, '2026-03-23 09:00:00', '2026-03-23 09:00:00'
             WHERE NOT EXISTS (SELECT 1 FROM Tasks WHERE Id = 1);
 
-            INSERT INTO Tasks (Id, Title, Description, Priority, DueDate, Status, ProjectId, CreatedAt)
-            SELECT 2, 'Complete API scaffolding', 'Implement DbContext, migrations, and basic endpoints.', 2, '2026-03-26 17:00:00', 1, 1, '2026-03-23 09:15:00'
+            INSERT INTO Tasks (Id, Title, Description, Priority, DueDate, Status, ProjectId, CreatedAt, UpdatedAt)
+            SELECT 2, 'Complete API scaffolding', 'Implement REST API endpoints and database setup.', 2, '2026-03-26 17:00:00', 1, 1, '2026-03-23 09:15:00', '2026-03-23 09:15:00'
             WHERE NOT EXISTS (SELECT 1 FROM Tasks WHERE Id = 2);
 
-            INSERT INTO Tasks (Id, Title, Description, Priority, DueDate, Status, ProjectId, CreatedAt)
-            SELECT 3, 'Set up weekly review', 'Use dashboard to manage personal recurring tasks.', 0, NULL, 0, 2, '2026-03-23 09:30:00'
+            INSERT INTO Tasks (Id, Title, Description, Priority, DueDate, Status, ProjectId, CreatedAt, UpdatedAt)
+            SELECT 3, 'Set up weekly review', 'Use dashboard to manage personal recurring tasks.', 0, NULL, 0, 2, '2026-03-23 09:30:00', '2026-03-23 09:30:00'
             WHERE NOT EXISTS (SELECT 1 FROM Tasks WHERE Id = 3);
             """;
 
@@ -111,6 +130,20 @@ static async Task EnsureDatabaseAsync(IServiceProvider services)
         await using var createTasks = conn.CreateCommand();
         createTasks.CommandText = createTasksSql;
         await createTasks.ExecuteNonQueryAsync();
+
+        await using var hasUpdatedAt = conn.CreateCommand();
+        hasUpdatedAt.CommandText = hasUpdatedAtSql;
+        var updatedAtExists = Convert.ToInt32(await hasUpdatedAt.ExecuteScalarAsync()) > 0;
+        if (!updatedAtExists)
+        {
+            await using var alterTasks = conn.CreateCommand();
+            alterTasks.CommandText = alterTasksSql;
+            await alterTasks.ExecuteNonQueryAsync();
+
+            await using var backfillUpdatedAt = conn.CreateCommand();
+            backfillUpdatedAt.CommandText = backfillUpdatedAtSql;
+            await backfillUpdatedAt.ExecuteNonQueryAsync();
+        }
 
         await using var seedProjects = conn.CreateCommand();
         seedProjects.CommandText = seedProjectsSql;

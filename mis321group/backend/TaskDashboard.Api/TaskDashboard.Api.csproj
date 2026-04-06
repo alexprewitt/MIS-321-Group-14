@@ -11,9 +11,4 @@
     <PackageReference Include="MySqlConnector" Version="2.4.0" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Compile Remove="Infrastructure\Data\AppDbContext.cs" />
-    <Compile Remove="Infrastructure\Migrations\**\*.cs" />
-  </ItemGroup>
-
 </Project>

@@ -1,59 +1,196 @@
 const API_BASE_URL =
   (typeof window !== "undefined" && window.APP_CONFIG && window.APP_CONFIG.apiBaseUrl) ||
   "http://localhost:5253";
+
 const MAX_TITLE_LEN = 500;
 const MAX_NOTE_LEN = 4000;
 
+const PRIORITY_LEVEL = { Low: 1, Medium: 2, High: 3, Urgent: 4 };
+const PRIORITY_OPTIONS = ["Low", "Medium", "High", "Urgent"];
+const STATUS_OPTIONS = ["Todo", "InProgress", "Done"];
+
+const PRIORITY_TO_API = { Low: "low", Medium: "medium", High: "high", Urgent: "urgent" };
+const STATUS_TO_API = { Todo: "todo", InProgress: "in-progress", Done: "done" };
+
+let allTasks = [];
+let allProjects = [];
+let focusModeEnabled = false;
+let apiOnline = false;
+let activeEditTaskId = null;
+let modalEditTaskId = null;
+let listLoading = false;
+const pendingActions = new Set();
+
 function renderAppShell() {
   const app = document.getElementById("app");
-  if (!app) {
-    throw new Error("Missing #app root element.");
-  }
+  if (!app) throw new Error("Missing #app element.");
 
   app.innerHTML = `
     <main class="container py-4">
-      <header class="mb-3">
-        <h1 class="h3 mb-1">Task Dashboard</h1>
-        <p class="text-secondary mb-0">Add in one step. Filter when you need to.</p>
+      <header class="mb-3 dashboard-header">
+        <h1 class="h3 mb-1 dashboard-title">Task Dashboard</h1>
+        <p class="small mb-0 dashboard-subtitle">One page. Fast edits. Focus where it matters.</p>
       </header>
 
-      <form id="quickAddForm" class="card p-3 mb-3" autocomplete="off" novalidate>
-        <div class="row g-2 align-items-stretch">
-          <div class="col-12 col-md">
-            <input id="quickTitle" name="title" type="text" maxlength="500" placeholder="What needs doing?" aria-label="Task title" class="form-control" />
-          </div>
-          <div class="col-12 col-md-3">
-            <select id="quickProject" name="projectId" aria-label="Project" class="form-select"></select>
-          </div>
-          <div class="col-12 col-md-auto">
-            <button type="submit" class="btn btn-primary w-100">Add</button>
+      <section id="apiBanner" class="alert alert-warning d-flex align-items-center gap-2 py-2 px-3 mb-3" role="status" aria-live="polite">
+        <span id="apiDot" class="badge rounded-pill text-bg-danger">Offline</span>
+        <span id="apiText">API disconnected</span>
+        <button id="apiRetryBtn" type="button" class="btn btn-outline-secondary btn-sm ms-auto">Retry</button>
+      </section>
+
+      <section id="loadFallback" class="alert alert-danger mb-3" hidden>
+        <p id="fallbackText" class="mb-2">Could not load tasks.</p>
+        <button id="fallbackRetryBtn" type="button" class="btn btn-danger btn-sm">Retry</button>
+      </section>
+
+      <form id="quickAddForm" class="card shadow-sm mb-4" autocomplete="off" novalidate>
+        <div class="card-body">
+          <div class="row g-2">
+            <div class="col-md-6">
+              <input id="quickTitle" class="form-control" name="title" type="text" maxlength="${MAX_TITLE_LEN}" placeholder="What needs doing?" aria-label="Task title" />
+            </div>
+            <div class="col-md-4">
+              <select id="quickProject" class="form-select" name="projectId" aria-label="Project"></select>
+            </div>
+            <div class="col-md-2 d-grid">
+              <button id="addBtn" type="submit" class="btn btn-primary">Add</button>
+            </div>
           </div>
         </div>
-        <details class="mt-3">
-          <summary>More options</summary>
-          <div class="row g-2 mt-1">
-            <div class="col-12 col-md-3"><label class="form-label small mb-1">Priority</label><select id="quickPriority" name="priority" class="form-select form-select-sm"><option value="Low">Low</option><option value="Medium" selected>Medium</option><option value="High">High</option></select></div>
-            <div class="col-12 col-md-3"><label class="form-label small mb-1">Status</label><select id="quickStatus" name="status" class="form-select form-select-sm"><option value="Todo" selected>Todo</option><option value="InProgress">In progress</option><option value="Done">Done</option></select></div>
-            <div class="col-12 col-md-3"><label class="form-label small mb-1">Due</label><input id="quickDue" name="dueDate" type="date" class="form-control form-control-sm" /></div>
-            <div class="col-12 col-md-3"><label class="form-label small mb-1">Note</label><input id="quickNote" name="description" type="text" maxlength="4000" placeholder="Optional" class="form-control form-control-sm" /></div>
-          </div>
-        </details>
+        <div class="card-footer bg-body-tertiary">
+          <details class="small" open>
+            <summary class="text-secondary">More options</summary>
+            <div class="row g-2 mt-1">
+              <div class="col-md-3">
+                <label class="form-label small text-secondary mb-1" for="quickPriority">Priority</label>
+                <select id="quickPriority" class="form-select form-select-sm" name="priority">
+                  <option value="Low">Low</option>
+                  <option value="Medium" selected>Medium</option>
+                  <option value="High">High</option>
+                  <option value="Urgent">Urgent</option>
+                </select>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small text-secondary mb-1" for="quickStatus">Status</label>
+                <select id="quickStatus" class="form-select form-select-sm" name="status">
+                  <option value="Todo" selected>Todo</option>
+                  <option value="InProgress">In progress</option>
+                  <option value="Done">Done</option>
+                </select>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small text-secondary mb-1" for="quickDue">Due date</label>
+                <input id="quickDue" class="form-control form-control-sm" name="dueDate" type="date" />
+              </div>
+              <div class="col-12">
+                <label class="form-label small text-secondary mb-1" for="quickNote">Description / notes</label>
+                <textarea id="quickNote" class="form-control form-control-sm" name="description" maxlength="${MAX_NOTE_LEN}" rows="2" placeholder="Optional notes"></textarea>
+              </div>
+            </div>
+          </details>
+        </div>
       </form>
 
-      <section id="mainPanel" class="card p-3" aria-labelledby="panel-label">
-        <h2 id="panel-label" class="visually-hidden">Your tasks</h2>
-        <div class="d-flex flex-wrap gap-2 mb-3">
-          <button id="focusModeBtn" type="button" class="btn btn-outline-secondary btn-sm" aria-pressed="false">Focus</button>
-          <select id="projectFilter" aria-label="Filter by project" class="form-select form-select-sm w-auto"></select>
-          <select id="priorityFilter" aria-label="Filter by priority" class="form-select form-select-sm w-auto"></select>
-          <select id="statusFilter" aria-label="Filter by status" class="form-select form-select-sm w-auto"></select>
-        </div>
-        <div id="nextTaskStrip" class="alert alert-primary py-2 px-3 mb-3" hidden></div>
-        <div id="message" class="small text-secondary mb-2" role="status" aria-live="polite" aria-atomic="true"></div>
-        <div id="taskList" class="d-flex flex-column gap-2"></div>
-        <p id="taskCount" class="small text-secondary text-end mb-0 mt-3"></p>
-      </section>
+      <div class="row g-4 align-items-start">
+        <section id="mainPanel" class="col-lg-8" aria-labelledby="tasks-label">
+          <div class="card shadow-sm">
+            <div class="card-body">
+          <h2 id="tasks-label" class="visually-hidden">Tasks</h2>
+
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+            <button id="focusModeBtn" type="button" class="btn btn-outline-primary btn-sm" aria-pressed="false">Focus mode</button>
+            <div class="ms-auto d-flex flex-wrap gap-2">
+              <select id="projectFilter" class="form-select form-select-sm" aria-label="Filter by project"></select>
+              <select id="priorityFilter" class="form-select form-select-sm" aria-label="Filter by priority"></select>
+              <select id="statusFilter" class="form-select form-select-sm" aria-label="Filter by status"></select>
+            </div>
+          </div>
+
+          <div id="message" class="small mb-2 text-secondary" role="status" aria-live="polite" aria-atomic="true"></div>
+
+          <section class="mb-3">
+            <h3 class="h6 text-uppercase text-secondary">Active</h3>
+            <div id="activeTaskList" class="vstack gap-2"></div>
+          </section>
+
+          <section class="mt-3">
+            <h3 class="h6 text-uppercase text-secondary">Completed</h3>
+            <div id="completedTaskList" class="vstack gap-2"></div>
+          </section>
+
+          <p id="taskCount" class="small text-secondary text-end mb-0 mt-3"></p>
+            </div>
+          </div>
+        </section>
+
+        <aside class="col-lg-4" aria-labelledby="ai-label">
+          <div class="card shadow-sm">
+            <div class="card-body">
+              <h2 id="ai-label" class="h5 ai-panel-title">AI Suggestions</h2>
+              <div id="aiFocus" class="card border-0 bg-light mb-2"></div>
+              <div id="aiOverdue" class="card border-0 bg-light mb-2"></div>
+              <div id="aiNeglected" class="card border-0 bg-light"></div>
+            </div>
+          </div>
+        </aside>
+      </div>
     </main>
+
+    <div class="modal fade" id="taskModal" tabindex="-1" aria-labelledby="taskModalTitle" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <form id="taskModalForm" novalidate>
+            <div class="modal-header">
+              <h2 class="modal-title fs-5" id="taskModalTitle">Add Task</h2>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body vstack gap-2">
+              <div>
+                <label class="form-label mb-1" for="modalTitle">Title</label>
+                <input id="modalTitle" class="form-control" name="title" type="text" maxlength="${MAX_TITLE_LEN}" required />
+              </div>
+              <div class="row g-2">
+                <div class="col-md-6">
+                  <label class="form-label mb-1" for="modalProject">Project</label>
+                  <select id="modalProject" class="form-select" name="projectId" required></select>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label mb-1" for="modalPriority">Priority</label>
+                  <select id="modalPriority" class="form-select" name="priority">
+                    <option value="Low">Low</option>
+                    <option value="Medium" selected>Medium</option>
+                    <option value="High">High</option>
+                    <option value="Urgent">Urgent</option>
+                  </select>
+                </div>
+              </div>
+              <div class="row g-2">
+                <div class="col-md-6">
+                  <label class="form-label mb-1" for="modalStatus">Status</label>
+                  <select id="modalStatus" class="form-select" name="status">
+                    <option value="Todo" selected>Todo</option>
+                    <option value="InProgress">In progress</option>
+                    <option value="Done">Done</option>
+                  </select>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label mb-1" for="modalDue">Due date</label>
+                  <input id="modalDue" class="form-control" name="dueDate" type="date" />
+                </div>
+              </div>
+              <div>
+                <label class="form-label mb-1" for="modalDescription">Description / notes</label>
+                <textarea id="modalDescription" class="form-control" name="description" maxlength="${MAX_NOTE_LEN}" rows="3" placeholder="Optional notes"></textarea>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+              <button id="taskModalSubmitBtn" type="submit" class="btn btn-primary">Save task</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
   `;
 }
 
@@ -62,10 +199,20 @@ renderAppShell();
 const projectFilter = document.getElementById("projectFilter");
 const priorityFilter = document.getElementById("priorityFilter");
 const statusFilter = document.getElementById("statusFilter");
-const taskList = document.getElementById("taskList");
+const activeTaskList = document.getElementById("activeTaskList");
+const completedTaskList = document.getElementById("completedTaskList");
 const taskCount = document.getElementById("taskCount");
 const message = document.getElementById("message");
 const mainPanel = document.getElementById("mainPanel");
+const apiDot = document.getElementById("apiDot");
+const apiText = document.getElementById("apiText");
+const apiRetryBtn = document.getElementById("apiRetryBtn");
+const loadFallback = document.getElementById("loadFallback");
+const fallbackText = document.getElementById("fallbackText");
+const fallbackRetryBtn = document.getElementById("fallbackRetryBtn");
+const aiFocus = document.getElementById("aiFocus");
+const aiOverdue = document.getElementById("aiOverdue");
+const aiNeglected = document.getElementById("aiNeglected");
 
 const quickAddForm = document.getElementById("quickAddForm");
 const quickTitle = document.getElementById("quickTitle");
@@ -74,13 +221,19 @@ const quickPriority = document.getElementById("quickPriority");
 const quickStatus = document.getElementById("quickStatus");
 const quickDue = document.getElementById("quickDue");
 const quickNote = document.getElementById("quickNote");
-
+const addBtn = document.getElementById("addBtn");
 const focusModeBtn = document.getElementById("focusModeBtn");
-const nextTaskStrip = document.getElementById("nextTaskStrip");
-
-let allTasks = [];
-let allProjects = [];
-let focusModeEnabled = false;
+const taskModalEl = document.getElementById("taskModal");
+const taskModalForm = document.getElementById("taskModalForm");
+const taskModalTitle = document.getElementById("taskModalTitle");
+const taskModalSubmitBtn = document.getElementById("taskModalSubmitBtn");
+const modalTitle = document.getElementById("modalTitle");
+const modalProject = document.getElementById("modalProject");
+const modalPriority = document.getElementById("modalPriority");
+const modalStatus = document.getElementById("modalStatus");
+const modalDue = document.getElementById("modalDue");
+const modalDescription = document.getElementById("modalDescription");
+const taskModal = taskModalEl ? new bootstrap.Modal(taskModalEl) : null;
 
 function escapeHtml(str) {
   if (str == null || str === "") return "";
@@ -89,58 +242,91 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-/** @param {"neutral" | "loading" | "error" | "success"} kind */
-function setStatus(text, kind = "neutral") {
-  message.textContent = text || "";
-  message.classList.remove("is-busy", "toast-error", "toast-success");
-  message.setAttribute("role", kind === "error" ? "alert" : "status");
-
-  if (kind === "loading") {
-    message.classList.add("is-busy");
-  }
-  if (kind === "error") {
-    message.classList.add("toast-error");
-  }
-  if (kind === "success") {
-    message.classList.add("toast-success");
-  }
+function toUiStatus(raw) {
+  const v = String(raw || "").toLowerCase();
+  if (v === "inprogress" || v === "in-progress") return "InProgress";
+  if (v === "done") return "Done";
+  return "Todo";
 }
 
-function setAppLoading(loading) {
-  document.body.classList.toggle("app-loading", loading);
+function toUiPriority(raw) {
+  const v = String(raw || "").toLowerCase();
+  if (v === "urgent") return "Urgent";
+  if (v === "high") return "High";
+  if (v === "low") return "Low";
+  return "Medium";
+}
+
+function statusLabel(status) {
+  return status === "InProgress" ? "In progress" : status;
+}
+
+function priorityClass(priority) {
+  if (priority === "Urgent") return "priority-badge priority-urgent";
+  if (priority === "High") return "priority-badge priority-high";
+  if (priority === "Medium") return "priority-badge priority-medium";
+  return "priority-badge priority-low";
+}
+
+function statusClass(status) {
+  if (status === "Done") return "status-badge status-done";
+  if (status === "InProgress") return "status-badge status-in-progress";
+  return "status-badge status-todo";
+}
+
+function setStatus(text, kind = "neutral") {
+  message.textContent = text || "";
+  message.classList.remove("text-danger", "text-success", "text-secondary");
+  message.setAttribute("role", kind === "error" ? "alert" : "status");
+  if (kind === "loading") message.classList.add("text-secondary");
+  if (kind === "error") message.classList.add("text-danger");
+  if (kind === "success") message.classList.add("text-success");
+  if (kind === "neutral") message.classList.add("text-secondary");
+}
+
+function setApiStatus(online) {
+  apiOnline = online;
+  apiDot.classList.add("text-white");
+  apiDot.classList.toggle("api-badge-online", online);
+  apiDot.classList.toggle("api-badge-offline", !online);
+  apiDot.textContent = online ? "Online" : "Offline";
+  apiText.textContent = online ? "API connected" : "API disconnected";
+}
+
+function setListLoading(loading) {
+  listLoading = loading;
+  mainPanel.classList.toggle("opacity-50", loading);
+  mainPanel.classList.toggle("pe-none", loading);
   focusModeBtn.disabled = loading;
 }
 
 function setQuickAddBusy(busy) {
-  quickAddForm.setAttribute("aria-busy", busy ? "true" : "false");
-  const submitBtn = quickAddForm.querySelector('button[type="submit"]');
-  const noProjects = allProjects.length === 0;
-  submitBtn.disabled = busy || noProjects;
+  quickAddForm.classList.toggle("opacity-50", busy);
+  quickAddForm.classList.toggle("pe-none", busy);
+  const disabled = busy || allProjects.length === 0;
+  addBtn.disabled = disabled;
   quickTitle.disabled = busy;
-  quickProject.disabled = busy || noProjects;
+  quickProject.disabled = disabled;
   quickPriority.disabled = busy;
   quickStatus.disabled = busy;
   quickDue.disabled = busy;
   quickNote.disabled = busy;
 }
 
-function setFocusBusy(busy) {
-  focusModeBtn.disabled = busy || document.body.classList.contains("app-loading");
+function setFallback(visible, text = "") {
+  loadFallback.hidden = !visible;
+  if (text) fallbackText.textContent = text;
 }
 
 async function readApiError(response) {
   try {
     const text = await response.text();
-    if (!text) {
-      return `Request failed (${response.status}).`;
-    }
+    if (!text) return `Request failed (${response.status}).`;
     try {
-      const j = JSON.parse(text);
-      if (j && typeof j.error === "string") {
-        return j.error;
-      }
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed.error === "string") return parsed.error;
     } catch {
-      /* not JSON */
+      // no-op
     }
     return `Request failed (${response.status}).`;
   } catch {
@@ -154,10 +340,12 @@ async function fetchJson(url, options) {
     response = await fetch(url, options);
   } catch (e) {
     if (e instanceof TypeError) {
-      throw new Error("Network error. Is the API running and reachable?");
+      setApiStatus(false);
+      throw new Error("Network error. API is unreachable.");
     }
     throw e;
   }
+  setApiStatus(true);
   if (!response.ok) {
     throw new Error(await readApiError(response));
   }
@@ -165,37 +353,91 @@ async function fetchJson(url, options) {
 }
 
 function ensureArray(value, label) {
-  if (!Array.isArray(value)) {
-    throw new Error(`Invalid response: expected a list of ${label}.`);
-  }
+  if (!Array.isArray(value)) throw new Error(`Invalid response: expected ${label} array.`);
   return value;
 }
 
+function normalizeTask(task) {
+  return {
+    ...task,
+    id: Number(task.id ?? task.Id),
+    projectId: Number(task.projectId ?? task.ProjectId),
+    title: task.title ?? task.Title ?? "",
+    description: task.description ?? task.Description ?? "",
+    projectName: task.projectName ?? task.ProjectName ?? "Project",
+    priority: toUiPriority(task.priority ?? task.Priority),
+    status: toUiStatus(task.status ?? task.Status),
+    dueDate: task.dueDate ?? task.DueDate ?? null,
+    createdAt: task.createdAt ?? task.CreatedAt ?? null,
+    updatedAt: task.updatedAt ?? task.UpdatedAt ?? null
+  };
+}
+
 function formatDueDate(value) {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  if (!value) return "No due date";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "No due date";
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function toDateInputValue(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function getProjectName(projectId) {
+  const project = allProjects.find((p) => Number(p.id ?? p.Id) === Number(projectId));
+  return project ? (project.name ?? project.Name) : "Project";
 }
 
 function fillProjectDropdowns(projects) {
   const opts = projects
-    .map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`)
+    .map((p) => {
+      const id = p.id ?? p.Id;
+      const name = p.name ?? p.Name;
+      return `<option value="${id}">${escapeHtml(name)}</option>`;
+    })
     .join("");
-
-  projectFilter.innerHTML = '<option value="">All projects</option>' + opts;
-
-  if (projects.length === 0) {
-    quickProject.innerHTML = "";
-    quickProject.disabled = true;
-    quickAddForm.querySelector('button[type="submit"]').disabled = true;
-    return;
+  quickProject.innerHTML = opts;
+  modalProject.innerHTML = opts;
+  if (projects.length > 0 && !quickProject.value) {
+    quickProject.value = String(projects[0].id ?? projects[0].Id);
+  }
+  if (projects.length > 0 && !modalProject.value) {
+    modalProject.value = String(projects[0].id ?? projects[0].Id);
   }
 
-  quickProject.disabled = false;
-  quickAddForm.querySelector('button[type="submit"]').disabled = false;
-  quickProject.innerHTML = opts;
-  quickProject.value = String(projects[0].id);
+  projectFilter.innerHTML = '<option value="">All projects</option>' + opts;
+}
+
+function titleKey(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function findTaskByTitle(title) {
+  const key = titleKey(title);
+  if (!key) return null;
+  return allTasks.find((task) => titleKey(task.title) === key) || null;
+}
+
+function openTaskModal(mode, taskData) {
+  if (!taskModal) return;
+  const isEdit = mode === "edit";
+  modalEditTaskId = isEdit ? Number(taskData.id) : null;
+  taskModalForm.setAttribute("data-mode", isEdit ? "edit" : "add");
+  taskModalTitle.textContent = isEdit ? "Edit Task" : "Add Task";
+  taskModalSubmitBtn.textContent = isEdit ? "Save changes" : "Add task";
+
+  modalTitle.value = taskData.title || "";
+  modalProject.value = String(taskData.projectId || allProjects[0]?.id || allProjects[0]?.Id || "");
+  modalPriority.value = taskData.priority || "Medium";
+  modalStatus.value = taskData.status || "Todo";
+  modalDue.value = toDateInputValue(taskData.dueDate);
+  modalDescription.value = taskData.description || "";
+  taskModal.show();
+  modalTitle.focus();
 }
 
 function fillFilterDropdowns() {
@@ -204,6 +446,7 @@ function fillFilterDropdowns() {
     <option value="Low">Low</option>
     <option value="Medium">Medium</option>
     <option value="High">High</option>
+    <option value="Urgent">Urgent</option>
   `;
   statusFilter.innerHTML = `
     <option value="">All statuses</option>
@@ -213,170 +456,260 @@ function fillFilterDropdowns() {
   `;
 }
 
-function priorityClass(priority) {
-  if (priority === "High") return "priority-high";
-  if (priority === "Medium") return "priority-medium";
-  return "priority-low";
+function isOverdue(task) {
+  if (!task.dueDate || task.status === "Done") return false;
+  const due = new Date(task.dueDate);
+  if (Number.isNaN(due.getTime())) return false;
+  return due.getTime() < Date.now();
 }
 
-function renderTasks(tasks) {
-  taskCount.textContent =
-    tasks.length === 0 ? "No tasks" : `${tasks.length} task${tasks.length === 1 ? "" : "s"}`;
-
-  if (tasks.length === 0) {
-    taskList.innerHTML =
-      '<p class="empty-hint">No tasks match these filters — or your list is empty. Add one above.</p>';
-    return;
-  }
-
-  taskList.innerHTML = tasks
-    .map((task) => {
-      const pClass = priorityClass(task.priority);
-      const cal = task.dueDate
-        ? `<div class="task-actions">
-             <button type="button" class="btn-calendar calendar-btn" data-task-id="${task.id}" title="Download .ics file">Calendar</button>
-           </div>`
-        : "";
-      return `
-      <article class="task-item">
-        <p class="task-title">${escapeHtml(task.title)}</p>
-        <div class="task-meta">
-          <span class="chip">${escapeHtml(task.projectName || "Project")}</span>
-          <span class="chip ${pClass}">${escapeHtml(task.priority)}</span>
-          <span class="chip">${escapeHtml(task.status)}</span>
-          <span class="chip">${formatDueDate(task.dueDate)}</span>
-        </div>
-        ${cal}
-      </article>`;
-    })
-    .join("");
+function isDueToday(task) {
+  if (!task.dueDate || task.status === "Done") return false;
+  const due = new Date(task.dueDate);
+  if (Number.isNaN(due.getTime())) return false;
+  const now = new Date();
+  return (
+    due.getFullYear() === now.getFullYear() &&
+    due.getMonth() === now.getMonth() &&
+    due.getDate() === now.getDate()
+  );
 }
 
-function renderNextStrip(task) {
-  if (!task || task.message) {
-    nextTaskStrip.hidden = true;
-    nextTaskStrip.innerHTML = "";
-    return;
-  }
-
-  nextTaskStrip.hidden = false;
-  const pClass = priorityClass(task.priority);
-  const cal = task.dueDate
-    ? `<div class="task-actions">
-         <button type="button" class="btn-calendar calendar-btn" data-task-id="${task.id}" title="Download .ics file">Calendar</button>
-       </div>`
-    : "";
-
-  nextTaskStrip.innerHTML = `
-    <div class="next-label">Next up</div>
-    <div class="next-title">${escapeHtml(task.title)}</div>
-    <div class="task-meta">
-      <span class="chip">${escapeHtml(task.projectName || "Project")}</span>
-      <span class="chip ${pClass}">${escapeHtml(task.priority)}</span>
-      <span class="chip">${escapeHtml(task.status)}</span>
-      <span class="chip">${formatDueDate(task.dueDate)}</span>
-    </div>
-    ${cal}
-  `;
+function isNeglected(task) {
+  if (task.status === "Done") return false;
+  const touch = new Date(task.updatedAt || task.createdAt || 0);
+  if (Number.isNaN(touch.getTime())) return false;
+  return Date.now() - touch.getTime() >= 3 * 24 * 60 * 60 * 1000;
 }
 
-function applyFilters() {
+function compareFocus(a, b) {
+  const pDiff = PRIORITY_LEVEL[b.priority] - PRIORITY_LEVEL[a.priority];
+  if (pDiff !== 0) return pDiff;
+
+  const aDue = a.dueDate ? new Date(a.dueDate).getTime() : Number.POSITIVE_INFINITY;
+  const bDue = b.dueDate ? new Date(b.dueDate).getTime() : Number.POSITIVE_INFINITY;
+  if (aDue !== bDue) return aDue - bDue;
+
+  return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+}
+
+function computeSuggestions(tasks) {
+  const active = tasks.filter((t) => t.status !== "Done");
+  const overdue = active.filter(isOverdue).sort(compareFocus);
+  const neglected = active.filter(isNeglected).sort(compareFocus);
+  const focusNext = [...active].sort(compareFocus)[0] || null;
+  return { focusNext, overdue, neglected };
+}
+
+function renderAiPanel() {
+  const { focusNext, overdue, neglected } = computeSuggestions(allTasks);
+
+  aiFocus.innerHTML = focusNext
+    ? `<div class="card-body p-3"><h3 class="h6">Prioritize next</h3><button type="button" class="ai-suggestion-item w-100 text-start border-0 bg-transparent p-2 mt-2 js-ai-suggestion" data-title="${escapeHtml(
+        focusNext.title
+      )}" data-project-id="${focusNext.projectId}" data-priority="${escapeHtml(focusNext.priority)}" data-due-date="${escapeHtml(
+        toDateInputValue(focusNext.dueDate)
+      )}"><p class="mb-1 task-title">${escapeHtml(focusNext.title)}</p><p class="small task-meta mb-0">${escapeHtml(
+        focusNext.projectName
+      )} - ${escapeHtml(focusNext.priority)} - ${escapeHtml(formatDueDate(focusNext.dueDate))}</p></button></div>`
+    : "<div class='card-body p-3'><h3 class='h6'>Prioritize next</h3><p class='small text-secondary mb-0'>No active tasks.</p></div>";
+
+  aiOverdue.innerHTML = overdue.length
+    ? `<div class="card-body p-3"><h3 class="h6">Overdue alerts</h3><ul class="mb-0 list-unstyled">${overdue
+        .slice(0, 4)
+        .map(
+          (t) =>
+            `<li><button type="button" class="ai-suggestion-item w-100 text-start border-0 bg-transparent p-2 mt-1 js-ai-suggestion" data-title="${escapeHtml(
+              t.title
+            )}" data-project-id="${t.projectId}" data-priority="${escapeHtml(t.priority)}" data-due-date="${escapeHtml(
+              toDateInputValue(t.dueDate)
+            )}">${escapeHtml(t.title)} (${escapeHtml(formatDueDate(t.dueDate))})</button></li>`
+        )
+        .join("")}</ul></div>`
+    : "<div class='card-body p-3'><h3 class='h6'>Overdue alerts</h3><p class='small text-secondary mb-0'>No overdue tasks.</p></div>";
+
+  aiNeglected.innerHTML = neglected.length
+    ? `<div class="card-body p-3"><h3 class="h6">Neglected nudges</h3><ul class="mb-0 list-unstyled">${neglected
+        .slice(0, 4)
+        .map(
+          (t) =>
+            `<li><button type="button" class="ai-suggestion-item w-100 text-start border-0 bg-transparent p-2 mt-1 js-ai-suggestion" data-title="${escapeHtml(
+              t.title
+            )}" data-project-id="${t.projectId}" data-priority="${escapeHtml(t.priority)}" data-due-date="${escapeHtml(
+              toDateInputValue(t.dueDate)
+            )}">${escapeHtml(t.title)} (inactive 3+ days)</button></li>`
+        )
+        .join("")}</ul></div>`
+    : "<div class='card-body p-3'><h3 class='h6'>Neglected nudges</h3><p class='small text-secondary mb-0'>Nothing neglected right now.</p></div>";
+}
+
+function getVisibleTasks() {
   const projectId = projectFilter.value;
   const priority = priorityFilter.value;
   const status = statusFilter.value;
 
-  const filtered = allTasks.filter((task) => {
+  return allTasks.filter((task) => {
     const okProject = !projectId || String(task.projectId) === projectId;
     const okPriority = !priority || task.priority === priority;
     const okStatus = !status || task.status === status;
-    return okProject && okPriority && okStatus;
+    const okFocus =
+      !focusModeEnabled ||
+      ((task.priority === "High" || task.priority === "Urgent") && (isOverdue(task) || isDueToday(task)));
+
+    return okProject && okPriority && okStatus && okFocus;
   });
-
-  renderTasks(filtered);
 }
 
-async function withListRefresh(fn) {
-  taskList.classList.add("is-refreshing");
-  try {
-    await fn();
-  } finally {
-    requestAnimationFrame(() => {
-      taskList.classList.remove("is-refreshing");
-    });
+function renderTaskCard(task) {
+  if (activeEditTaskId === task.id) {
+    return `
+      <article class="card task-card ${task.status !== "Done" ? "active-task-card" : ""} border-primary-subtle">
+        <div class="card-body">
+        <form class="edit-form vstack gap-2" data-task-id="${task.id}">
+          <input class="form-control" type="text" name="title" maxlength="${MAX_TITLE_LEN}" value="${escapeHtml(task.title)}" required />
+          <div class="row g-2">
+            <div class="col-md-3"><select class="form-select form-select-sm" name="projectId">
+              ${allProjects
+                .map((p) => {
+                  const id = Number(p.id ?? p.Id);
+                  const name = p.name ?? p.Name;
+                  return `<option value="${id}" ${id === task.projectId ? "selected" : ""}>${escapeHtml(name)}</option>`;
+                })
+                .join("")}
+            </select></div>
+            <div class="col-md-3"><select class="form-select form-select-sm" name="priority">
+              ${PRIORITY_OPTIONS.map((p) => `<option value="${p}" ${p === task.priority ? "selected" : ""}>${p}</option>`).join("")}
+            </select></div>
+            <div class="col-md-3"><select class="form-select form-select-sm" name="status">
+              ${STATUS_OPTIONS.map((s) => `<option value="${s}" ${s === task.status ? "selected" : ""}>${escapeHtml(statusLabel(s))}</option>`).join("")}
+            </select></div>
+            <div class="col-md-3"><input class="form-control form-control-sm" type="date" name="dueDate" value="${toDateInputValue(task.dueDate)}" /></div>
+          </div>
+          <textarea class="form-control form-control-sm" name="description" maxlength="${MAX_NOTE_LEN}" rows="2" placeholder="Optional notes">${escapeHtml(
+            task.description || ""
+          )}</textarea>
+          <div class="d-flex gap-2 align-items-center">
+            <button type="submit" class="btn btn-primary btn-sm">Save</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm js-cancel-edit" data-task-id="${task.id}">Cancel</button>
+          </div>
+        </form>
+        </div>
+      </article>
+    `;
   }
+
+  const busy = pendingActions.has(task.id);
+  const done = task.status === "Done";
+  return `
+    <article class="card task-card ${!done ? "active-task-card" : ""} ${busy ? "opacity-50 pe-none" : ""}">
+      <div class="card-body">
+      <div class="d-flex justify-content-between gap-2">
+        <p class="task-title mb-0">${escapeHtml(task.title)}</p>
+        <div class="d-flex gap-2">
+          <button type="button" class="btn btn-outline-secondary btn-sm js-edit" data-task-id="${task.id}" ${busy ? "disabled" : ""}>Edit</button>
+          <button type="button" class="btn btn-outline-danger btn-sm js-delete" data-task-id="${task.id}" ${busy ? "disabled" : ""}>Delete</button>
+        </div>
+      </div>
+      <div class="d-flex flex-wrap gap-2 mt-2">
+        <span class="badge project-badge task-meta">${escapeHtml(task.projectName || "Project")}</span>
+        <span class="badge ${priorityClass(task.priority)}">${escapeHtml(task.priority)}</span>
+        <span class="badge ${statusClass(task.status)}">${escapeHtml(statusLabel(task.status))}</span>
+        <span class="badge due-badge task-meta">${escapeHtml(formatDueDate(task.dueDate))}</span>
+      </div>
+      ${task.description ? `<p class="small task-meta mb-0 mt-2">${escapeHtml(task.description)}</p>` : ""}
+      <div class="d-flex gap-2 align-items-center mt-2">
+        ${
+          done
+            ? `<span class="small completed-label">Completed</span>`
+            : `<button type="button" class="btn btn-primary btn-sm js-complete" data-task-id="${task.id}" ${busy ? "disabled" : ""}>Complete</button>`
+        }
+      </div>
+      </div>
+    </article>
+  `;
 }
 
-async function loadDashboard() {
-  setAppLoading(true);
-  setStatus("Loading…", "loading");
+function renderTasks() {
+  const visible = getVisibleTasks();
+  const active = visible.filter((t) => t.status !== "Done");
+  const completed = visible.filter((t) => t.status === "Done");
+
+  activeTaskList.innerHTML = active.length
+    ? active.map(renderTaskCard).join("")
+    : '<p class="text-secondary small mb-0 py-2">No active tasks match your filters.</p>';
+
+  completedTaskList.innerHTML = completed.length
+    ? completed.map(renderTaskCard).join("")
+    : '<p class="text-secondary small mb-0 py-2">No completed tasks yet.</p>';
+
+  taskCount.textContent = `${visible.length} visible - ${active.length} active - ${completed.length} completed`;
+  renderAiPanel();
+}
+
+async function loadDashboard(showLoading = true) {
+  if (showLoading) {
+    setListLoading(true);
+    setStatus("Loading tasks...", "loading");
+  }
+
   try {
-    const [projects, tasks, nextTask] = await Promise.all([
-      fetchJson(`${API_BASE_URL}/api/projects`).then((d) => ensureArray(d, "projects")),
-      fetchJson(`${API_BASE_URL}/api/tasks/all?focusMode=${focusModeEnabled}`).then((d) => ensureArray(d, "tasks")),
-      fetchJson(`${API_BASE_URL}/api/tasks/next`)
+    const [projectsRes, tasksRes] = await Promise.all([
+      fetchJson(`${API_BASE_URL}/api/projects`),
+      fetchJson(`${API_BASE_URL}/api/tasks/all`)
     ]);
 
-    allProjects = projects;
-    allTasks = tasks;
+    allProjects = ensureArray(projectsRes, "projects");
+    allTasks = ensureArray(tasksRes, "tasks").map(normalizeTask);
+    allTasks.forEach((task) => {
+      if (!task.projectName) task.projectName = getProjectName(task.projectId);
+    });
 
     fillProjectDropdowns(allProjects);
     fillFilterDropdowns();
-    applyFilters();
-    renderNextStrip(nextTask);
+    setFallback(false);
     setStatus("", "neutral");
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : "Something went wrong.";
+    renderTasks();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Failed to load dashboard.";
     setStatus(msg, "error");
+    setFallback(true, `${msg} Use retry once API is available.`);
     allProjects = [];
     allTasks = [];
     fillProjectDropdowns([]);
-    applyFilters();
-    renderNextStrip(null);
+    renderTasks();
   } finally {
-    setAppLoading(false);
-    focusModeBtn.disabled = false;
+    setListLoading(false);
+    setQuickAddBusy(false);
   }
 }
 
-async function refreshTasksAndNext() {
-  await withListRefresh(async () => {
-    const tasks = ensureArray(
-      await fetchJson(`${API_BASE_URL}/api/tasks/all?focusMode=${focusModeEnabled}`),
-      "tasks"
-    );
-    const nextTask = await fetchJson(`${API_BASE_URL}/api/tasks/next`);
-    allTasks = tasks;
-    applyFilters();
-    renderNextStrip(nextTask);
-  });
-}
-
-async function exportTaskToCalendar(taskId) {
-  setStatus("Preparing calendar…", "loading");
+async function mutateTask(taskId, body, successMessage) {
+  pendingActions.add(taskId);
+  renderTasks();
+  setStatus("Saving...", "loading");
   try {
-    let response;
-    try {
-      response = await fetch(`${API_BASE_URL}/api/tasks/${taskId}/calendar`);
-    } catch (e) {
-      if (e instanceof TypeError) {
-        throw new Error("Network error. Is the API running?");
-      }
-      throw e;
-    }
-    if (!response.ok) {
-      throw new Error(await readApiError(response));
-    }
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `task-${taskId}.ics`;
-    link.click();
-    URL.revokeObjectURL(url);
-    setStatus("", "neutral");
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : "Export failed.";
+    const updated = await fetchJson(`${API_BASE_URL}/api/tasks/${taskId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const task = normalizeTask(updated);
+    task.projectName = task.projectName || getProjectName(task.projectId);
+
+    const index = allTasks.findIndex((t) => t.id === taskId);
+    if (index >= 0) allTasks[index] = task;
+    else allTasks.push(task);
+
+    setStatus(successMessage, "success");
+    renderTasks();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Update failed.";
     setStatus(msg, "error");
+  } finally {
+    pendingActions.delete(taskId);
+    window.setTimeout(() => {
+      if (message.textContent === successMessage) setStatus("", "neutral");
+    }, 1800);
   }
 }
 
@@ -384,108 +717,255 @@ quickAddForm.addEventListener("submit", async (event) => {
   event.preventDefault();
 
   const title = quickTitle.value.trim();
+  const description = quickNote.value.trim();
   const projectId = Number(quickProject.value);
-  const note = quickNote.value.trim();
 
-  if (!title) {
-    setStatus("Enter a task title.", "error");
-    quickTitle.focus();
-    return;
-  }
-  if (title.length > MAX_TITLE_LEN) {
-    setStatus(`Title must be at most ${MAX_TITLE_LEN} characters.`, "error");
-    quickTitle.focus();
-    return;
-  }
-  if (note.length > MAX_NOTE_LEN) {
-    setStatus(`Note must be at most ${MAX_NOTE_LEN} characters.`, "error");
-    quickNote.focus();
-    return;
-  }
-  if (!projectId || Number.isNaN(projectId)) {
-    setStatus("Create a project first (API has no projects).", "error");
-    return;
-  }
+  if (!title) return setStatus("Title is required.", "error");
+  if (title.length > MAX_TITLE_LEN) return setStatus(`Title max is ${MAX_TITLE_LEN}.`, "error");
+  if (description.length > MAX_NOTE_LEN) return setStatus(`Description max is ${MAX_NOTE_LEN}.`, "error");
+  if (!projectId || Number.isNaN(projectId)) return setStatus("Choose a valid project.", "error");
 
   const payload = {
     title,
-    description: note || null,
-    priority: quickPriority.value,
-    status: quickStatus.value,
-    projectId,
-    dueDate: quickDue.value ? new Date(quickDue.value).toISOString() : null
+    description: description || null,
+    dueDate: quickDue.value ? new Date(`${quickDue.value}T00:00:00`).toISOString() : null,
+    priority: PRIORITY_TO_API[quickPriority.value] || "medium",
+    status: STATUS_TO_API[quickStatus.value] || "todo",
+    projectId
   };
 
   setQuickAddBusy(true);
-  setStatus("Adding…", "loading");
+  setStatus("Adding task...", "loading");
 
   try {
-    await fetchJson(`${API_BASE_URL}/api/tasks`, {
+    const created = await fetchJson(`${API_BASE_URL}/api/tasks`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
-
+    const task = normalizeTask(created);
+    task.projectName = task.projectName || getProjectName(task.projectId);
+    allTasks.unshift(task);
     quickTitle.value = "";
     quickNote.value = "";
     quickDue.value = "";
     quickPriority.value = "Medium";
     quickStatus.value = "Todo";
-
-    await refreshTasksAndNext();
-    setStatus("Added.", "success");
+    setStatus("Task added.", "success");
+    renderTasks();
     quickTitle.focus();
-    window.setTimeout(() => {
-      if (message.textContent === "Added.") {
-        setStatus("", "neutral");
-      }
-    }, 2000);
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : "Could not add task.";
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Could not create task.";
     setStatus(msg, "error");
   } finally {
     setQuickAddBusy(false);
   }
 });
 
-projectFilter.addEventListener("change", applyFilters);
-priorityFilter.addEventListener("change", applyFilters);
-statusFilter.addEventListener("change", applyFilters);
+function buildTaskPayloadFromValues(values) {
+  return {
+    title: values.title,
+    description: values.description || null,
+    dueDate: values.dueDate ? new Date(`${values.dueDate}T00:00:00`).toISOString() : null,
+    priority: PRIORITY_TO_API[values.priority] || "medium",
+    status: STATUS_TO_API[values.status] || "todo",
+    projectId: values.projectId
+  };
+}
 
-taskList.addEventListener("click", async (event) => {
-  const btn = event.target.closest(".calendar-btn");
-  if (!btn) return;
-  const id = Number(btn.getAttribute("data-task-id"));
-  if (id) await exportTaskToCalendar(id);
-});
+async function createTaskFromModal(values) {
+  setStatus("Adding task...", "loading");
+  const created = await fetchJson(`${API_BASE_URL}/api/tasks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(buildTaskPayloadFromValues(values))
+  });
+  const task = normalizeTask(created);
+  task.projectName = task.projectName || getProjectName(task.projectId);
+  allTasks.unshift(task);
+  renderTasks();
+  setStatus("Task added.", "success");
+}
 
-nextTaskStrip.addEventListener("click", async (event) => {
-  const btn = event.target.closest(".calendar-btn");
-  if (!btn) return;
-  const id = Number(btn.getAttribute("data-task-id"));
-  if (id) await exportTaskToCalendar(id);
-});
+async function updateTaskFromModal(taskId, values) {
+  await mutateTask(taskId, buildTaskPayloadFromValues(values), "Task updated.");
+}
 
-focusModeBtn.addEventListener("click", async () => {
-  focusModeEnabled = !focusModeEnabled;
-  focusModeBtn.setAttribute("aria-pressed", String(focusModeEnabled));
-  focusModeBtn.textContent = focusModeEnabled ? "Focused" : "Focus";
-  setFocusBusy(true);
-  setStatus("Updating…", "loading");
+taskModalForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const mode = taskModalForm.getAttribute("data-mode") || "add";
+  const values = {
+    title: modalTitle.value.trim(),
+    description: modalDescription.value.trim(),
+    projectId: Number(modalProject.value),
+    priority: modalPriority.value,
+    status: modalStatus.value,
+    dueDate: modalDue.value
+  };
+
+  if (!values.title) return setStatus("Title is required.", "error");
+  if (!values.projectId || Number.isNaN(values.projectId)) return setStatus("Project is required.", "error");
+
+  taskModalSubmitBtn.disabled = true;
   try {
-    await refreshTasksAndNext();
-    setStatus("", "neutral");
+    if (mode === "edit" && modalEditTaskId) {
+      await updateTaskFromModal(modalEditTaskId, values);
+    } else {
+      await createTaskFromModal(values);
+    }
+    taskModal.hide();
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Update failed.";
+    const msg = e instanceof Error ? e.message : "Could not save task.";
     setStatus(msg, "error");
   } finally {
-    setFocusBusy(false);
+    taskModalSubmitBtn.disabled = false;
   }
 });
+
+taskModalEl.addEventListener("hidden.bs.modal", () => {
+  modalEditTaskId = null;
+  taskModalForm.reset();
+  if (allProjects.length > 0) {
+    modalProject.value = String(allProjects[0].id ?? allProjects[0].Id);
+  }
+  modalPriority.value = "Medium";
+  modalStatus.value = "Todo";
+});
+
+function handleAiSuggestionClick(button) {
+  const title = button.getAttribute("data-title") || "";
+  const suggestedProjectId = Number(button.getAttribute("data-project-id"));
+  const suggestedPriority = button.getAttribute("data-priority") || "Medium";
+  const suggestedDueDate = button.getAttribute("data-due-date") || "";
+
+  const existing = findTaskByTitle(title);
+  if (existing) {
+    openTaskModal("edit", existing);
+    return;
+  }
+
+  openTaskModal("add", {
+    title,
+    projectId: Number.isNaN(suggestedProjectId) ? Number(quickProject.value) : suggestedProjectId,
+    priority: PRIORITY_OPTIONS.includes(suggestedPriority) ? suggestedPriority : "Medium",
+    status: "Todo",
+    dueDate: suggestedDueDate ? new Date(`${suggestedDueDate}T00:00:00`).toISOString() : null,
+    description: ""
+  });
+}
+
+document.addEventListener("click", (event) => {
+  const aiSuggestionBtn = event.target.closest(".js-ai-suggestion");
+  if (!aiSuggestionBtn) return;
+  handleAiSuggestionClick(aiSuggestionBtn);
+});
+
+mainPanel.addEventListener("click", async (event) => {
+  const editBtn = event.target.closest(".js-edit");
+  if (editBtn) {
+    activeEditTaskId = Number(editBtn.getAttribute("data-task-id"));
+    renderTasks();
+    return;
+  }
+
+  const cancelBtn = event.target.closest(".js-cancel-edit");
+  if (cancelBtn) {
+    activeEditTaskId = null;
+    renderTasks();
+    return;
+  }
+
+  const completeBtn = event.target.closest(".js-complete");
+  if (completeBtn) {
+    const id = Number(completeBtn.getAttribute("data-task-id"));
+    const task = allTasks.find((t) => t.id === id);
+    if (!task) return;
+    await mutateTask(
+      id,
+      {
+        title: task.title,
+        description: task.description || null,
+        dueDate: task.dueDate,
+        priority: PRIORITY_TO_API[task.priority],
+        status: "done",
+        projectId: task.projectId
+      },
+      "Task completed."
+    );
+    return;
+  }
+
+  const deleteBtn = event.target.closest(".js-delete");
+  if (deleteBtn) {
+    const id = Number(deleteBtn.getAttribute("data-task-id"));
+    if (!id) return;
+    pendingActions.add(id);
+    renderTasks();
+    setStatus("Deleting...", "loading");
+    try {
+      await fetchJson(`${API_BASE_URL}/api/tasks/${id}`, { method: "DELETE" });
+      allTasks = allTasks.filter((t) => t.id !== id);
+      if (activeEditTaskId === id) activeEditTaskId = null;
+      setStatus("Task deleted.", "success");
+      renderTasks();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Delete failed.";
+      setStatus(msg, "error");
+    } finally {
+      pendingActions.delete(id);
+    }
+  }
+});
+
+mainPanel.addEventListener("submit", async (event) => {
+  const form = event.target.closest(".edit-form");
+  if (!form) return;
+  event.preventDefault();
+
+  const id = Number(form.getAttribute("data-task-id"));
+  const formData = new FormData(form);
+  const title = String(formData.get("title") || "").trim();
+  const description = String(formData.get("description") || "").trim();
+  const projectId = Number(formData.get("projectId"));
+  const priority = String(formData.get("priority") || "Medium");
+  const status = String(formData.get("status") || "Todo");
+  const dueValue = String(formData.get("dueDate") || "");
+
+  if (!title) return setStatus("Title is required.", "error");
+  if (!projectId || Number.isNaN(projectId)) return setStatus("Project is required.", "error");
+
+  await mutateTask(
+    id,
+    {
+      title,
+      description: description || null,
+      dueDate: dueValue ? new Date(`${dueValue}T00:00:00`).toISOString() : null,
+      priority: PRIORITY_TO_API[priority] || "medium",
+      status: STATUS_TO_API[status] || "todo",
+      projectId
+    },
+    "Task updated."
+  );
+
+  activeEditTaskId = null;
+  renderTasks();
+});
+
+focusModeBtn.addEventListener("click", () => {
+  focusModeEnabled = !focusModeEnabled;
+  focusModeBtn.setAttribute("aria-pressed", String(focusModeEnabled));
+  focusModeBtn.textContent = focusModeEnabled ? "Focus mode: on" : "Focus mode";
+  renderTasks();
+});
+
+projectFilter.addEventListener("change", renderTasks);
+priorityFilter.addEventListener("change", renderTasks);
+statusFilter.addEventListener("change", renderTasks);
+
+apiRetryBtn.addEventListener("click", () => loadDashboard());
+fallbackRetryBtn.addEventListener("click", () => loadDashboard());
 
 fillFilterDropdowns();
 loadDashboard().then(() => {
-  if (!document.body.classList.contains("app-loading")) {
-    quickTitle.focus();
-  }
+  quickTitle.focus();
 });
