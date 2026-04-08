@@ -1,6 +1,6 @@
 # Validation & edge cases (manual checklist)
 
-Run the API (`dotnet run --launch-profile http` in `backend/TaskDashboard.Api`) and open the **`frontend`** folder with a static server (e.g. Live Server). Match **`frontend/config.js`** to your API URL (`http://localhost:5253` by default).
+Run the API (`dotnet run --launch-profile http` in `api/TaskDashboard.Api`) and open the **`Client`** folder with a static server (e.g. Live Server). Match **`Client/Resources/scripts/config.js`** to your API URL (`http://localhost:5253` by default).
 
 ## Backend (HTTP)
 

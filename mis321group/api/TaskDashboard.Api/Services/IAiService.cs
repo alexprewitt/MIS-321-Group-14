@@ -22,4 +22,4 @@ public sealed record AiCategorizeResult(bool Success, string? Error, string? Sug
 
 public sealed record AiBreakdownResult(bool Success, string? Error, IReadOnlyList<string> Subtasks);
 
-public sealed record AiNextStepResult(bool Success, string? Error, int? RecommendedTaskId, string? RecommendedTitle, string? Reason);
+public sealed record AiNextStepResult(bool Success, string? Error, int? RecommendedTaskId, string? RecommendedTitle, string? Rationale);

@@ -21,7 +21,7 @@ Personal task and project manager: **ASP.NET Core Web API (.NET 8)** + **MySQL (
 From the **repository root**:
 
 ```bash
-cd backend/TaskDashboard.Api
+cd api/TaskDashboard.Api
 dotnet run --launch-profile http
 ```
 
@@ -36,13 +36,13 @@ Leave this terminal open. The API listens at **http://localhost:5253** (HTTP pro
 
 On startup, the API creates required **MySQL tables** (`Projects`, `Tasks`) if they do not exist and seeds sample rows.
 
-- Configure connection in `backend/TaskDashboard.Api/appsettings.json` under `ConnectionStrings:MySql`.
+- Configure connection in `api/TaskDashboard.Api/appsettings.json` under `ConnectionStrings:MySql`.
 
 ### 3. Run the frontend
 
-1. Open the **`frontend`** folder in VS Code (or your editor).
+1. Open the **`Client`** folder in VS Code (or your editor).
 2. Start Live Server (or similar) so the site is served at something like **http://127.0.0.1:5500**.
-3. Ensure **`frontend/config.js`** matches your API URL:
+3. Ensure **`Client/Resources/scripts/config.js`** matches your API URL:
 
 ```js
 window.APP_CONFIG = {
@@ -61,10 +61,10 @@ window.APP_CONFIG = {
 | Path | Purpose |
 |------|--------|
 | `TaskDashboard.sln` | Visual Studio / `dotnet` solution |
-| `backend/TaskDashboard.Api/` | Web API, direct SQL data access |
-| `frontend/` | `index.html`, `styles.css`, `app.js`, **`config.js`** (API URL) |
+| `api/TaskDashboard.Api/` | Web API, direct SQL data access |
+| `Client/` | `index.html`, `Resources/styles/styles.css`, `Resources/scripts/app.js`, **`Resources/scripts/config.js`** (API URL) |
 | `TESTING.md` | Manual validation checklist |
-| `backend/TaskDashboard.Api.Tests/` | Unit tests (`RequestValidators`) |
+| `api/TaskDashboard.Api.Tests/` | Unit tests (`RequestValidators`) |
 
 ---
 
@@ -76,7 +76,7 @@ window.APP_CONFIG = {
 | OpenAI (optional) | `OpenAI:ApiKey` | Use [User Secrets](https://learn.microsoft.com/en-us/aspnet/core/security/app-secrets) or env var `OpenAI__ApiKey` |
 
 ```bash
-cd backend/TaskDashboard.Api
+cd api/TaskDashboard.Api
 dotnet user-secrets set "OpenAI:ApiKey" "sk-your-key-here"
 ```
 
@@ -96,7 +96,7 @@ dotnet test TaskDashboard.sln
 
 ### Backend (API)
 
-- Publish: `dotnet publish backend/TaskDashboard.Api -c Release -o ./publish`
+- Publish: `dotnet publish api/TaskDashboard.Api -c Release -o ./publish`
 - Host on **Azure App Service**, **IIS**, **Linux + Kestrel**, or any host that runs .NET 8.
 - Set environment to **Production** and configure:
   - Connection strings / `Database:Provider`
@@ -105,7 +105,7 @@ dotnet test TaskDashboard.sln
 
 ### Frontend (static site)
 
-- Deploy **`frontend/`** contents (HTML/CSS/JS + **`config.js`**) to **GitHub Pages**, **Azure Static Web Apps**, **Netlify**, **S3 + CloudFront**, etc.
+- Deploy **`Client/`** contents (HTML/CSS/JS + **`Resources/scripts/config.js`**) to **GitHub Pages**, **Azure Static Web Apps**, **Netlify**, **S3 + CloudFront**, etc.
 - After deployment, set **`config.js`** → `apiBaseUrl` to your **public API URL** (must use **HTTPS** in production).
 - Update backend **CORS** to include your static site origin.
 
@@ -128,8 +128,8 @@ Course / group project — MIS 321.
 
 ## Terminal commands to run app
 
-cd backend/TaskDashboard.Api
+cd api/TaskDashboard.Api
 dotnet run --launch-profile http
 
-cd frontend
+cd Client
 npx serve -1 5500

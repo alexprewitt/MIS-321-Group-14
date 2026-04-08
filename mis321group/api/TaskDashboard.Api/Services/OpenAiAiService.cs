@@ -150,7 +150,7 @@ public sealed class OpenAiAiService : IAiService
             Respond with ONLY a single JSON object (no markdown, no code fences) using exactly these keys:
             - recommendedTaskId: number or null (use the id from the list if it matches your pick; else null)
             - recommendedTitle: string (must match one task title exactly if possible)
-            - reason: string (one or two short sentences)
+            - rationale: string (one or two short sentences)
             """;
 
         var userPayload = JsonSerializer.Serialize(new { tasks }, JsonOptions);
@@ -176,7 +176,7 @@ public sealed class OpenAiAiService : IAiService
                 null,
                 id,
                 root.GetProperty("recommendedTitle").GetString(),
-                root.GetProperty("reason").GetString());
+                root.GetProperty("rationale").GetString());
         }
         catch (Exception ex)
         {

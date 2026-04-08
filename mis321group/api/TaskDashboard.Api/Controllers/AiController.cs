@@ -110,7 +110,8 @@ public class AiController(IAiService aiService) : ControllerBase
         {
             recommendedTaskId = result.RecommendedTaskId,
             recommendedTitle = result.RecommendedTitle,
-            reason = result.Reason
+            rationale = result.Rationale,
+            reason = result.Rationale
         });
     }
 
