@@ -22,130 +22,147 @@ let modalEditTaskId = null;
 let listLoading = false;
 const pendingActions = new Set();
 let aiSuggestionMode = "llm";
-let aiState = { loading: false, error: "", focusSuggestion: null };
+let aiState = { loading: false, error: "", focusSuggestion: null, newTaskSuggestions: [], emptyFocusRationale: null };
 
 function renderAppShell() {
   const app = document.getElementById("app");
   if (!app) throw new Error("Missing #app element.");
 
   app.innerHTML = `
-    <main class="dashboard-shell">
-      <header class="dashboard-header mb-3">
-        <h1 class="h5 mb-1 dashboard-title">Task Dashboard</h1>
-        <p class="small mb-0 dashboard-subtitle">Your one-page command center for planning and execution.</p>
-      </header>
+    <main class="app-layout">
+      <aside class="project-sidebar" aria-label="Primary navigation">
+        <div class="sidebar-brand">Projects</div>
+        <nav class="sidebar-nav">
+          <a href="#" class="sidebar-link is-active">Tasks</a>
+        </nav>
+      </aside>
 
-      <section id="loadFallback" class="alert alert-danger mb-3" hidden>
-        <p id="fallbackText" class="mb-2">Could not load tasks.</p>
-        <button id="fallbackRetryBtn" type="button" class="btn btn-danger btn-sm">Retry</button>
-      </section>
-
-      <form id="quickAddForm" class="card quick-capture-card mb-3" autocomplete="off" novalidate>
-        <div class="card-body">
-          <div class="row g-2 align-items-center">
-            <div class="col-md-6">
-              <input id="quickTitle" class="form-control" name="title" type="text" maxlength="${MAX_TITLE_LEN}" placeholder="What needs doing?" aria-label="Task title" />
-            </div>
-            <div class="col-md-4">
-              <select id="quickProject" class="form-select" name="projectId" aria-label="Project"></select>
-            </div>
-            <div class="col-md-2 d-grid">
-              <button id="addBtn" type="submit" class="btn btn-primary">Add</button>
-            </div>
+      <section class="workspace-shell">
+        <header class="workspace-topbar">
+          <div class="workspace-topbar-title">
+            <h1 class="dashboard-title mb-0">Task Workspace</h1>
+            <p class="dashboard-subtitle mb-0">Manage planning and execution in one view.</p>
           </div>
-        </div>
-        <div class="card-footer bg-body-tertiary">
-          <details class="small">
-            <summary class="text-secondary">Details</summary>
-            <div class="row g-2 mt-1">
-              <div class="col-md-3">
-                <label class="form-label small text-secondary mb-1" for="quickPriority">Priority</label>
-                <select id="quickPriority" class="form-select form-select-sm" name="priority">
-                  <option value="Low">Low</option>
-                  <option value="Medium" selected>Medium</option>
-                  <option value="High">High</option>
-                  <option value="Urgent">Urgent</option>
-                </select>
-              </div>
-              <div class="col-md-3">
-                <label class="form-label small text-secondary mb-1" for="quickStatus">Status</label>
-                <select id="quickStatus" class="form-select form-select-sm" name="status">
-                  <option value="Todo" selected>Todo</option>
-                  <option value="InProgress">In progress</option>
-                  <option value="Done">Done</option>
-                </select>
-              </div>
-              <div class="col-md-3">
-                <label class="form-label small text-secondary mb-1" for="quickDue">Due date</label>
-                <input id="quickDue" class="form-control form-control-sm" name="dueDate" type="date" />
-              </div>
-              <div class="col-12">
-                <label class="form-label small text-secondary mb-1" for="quickNote">Description / notes</label>
-                <textarea id="quickNote" class="form-control form-control-sm" name="description" maxlength="${MAX_NOTE_LEN}" rows="2" placeholder="Optional notes"></textarea>
-              </div>
-            </div>
-          </details>
-        </div>
-      </form>
-
-      <div class="dashboard-content row g-3 align-items-start">
-        <section id="mainPanel" class="col-lg-8 dashboard-main" aria-labelledby="tasks-label">
-          <div class="card shadow-sm main-panel-card">
-            <div class="card-body">
-          <h2 id="tasks-label" class="visually-hidden">Tasks</h2>
-
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
-            <button id="focusModeBtn" type="button" class="btn btn-outline-primary btn-sm focus-mode-toggle" aria-pressed="false">Focus mode</button>
-            <div class="ms-auto d-flex flex-wrap gap-2">
-              <select id="projectFilter" class="form-select form-select-sm" aria-label="Filter by project"></select>
-              <select id="priorityFilter" class="form-select form-select-sm" aria-label="Filter by priority"></select>
-              <select id="statusFilter" class="form-select form-select-sm" aria-label="Filter by status"></select>
-            </div>
+          <div class="workspace-tabs" aria-label="Workspace tabs">
+            <span class="workspace-tab is-active">Tasks</span>
           </div>
+        </header>
 
-          <div id="message" class="small mb-2 text-secondary" role="status" aria-live="polite" aria-atomic="true"></div>
-
-          <section class="task-group active-group mb-3">
-            <h3 class="h6 text-uppercase text-secondary mb-2">Active</h3>
-            <div id="activeTaskList" class="vstack gap-2"></div>
+        <div class="workspace-content">
+          <section id="loadFallback" class="alert alert-danger mb-3" hidden>
+            <p id="fallbackText" class="mb-2">Could not load tasks.</p>
+            <button id="fallbackRetryBtn" type="button" class="btn btn-danger btn-sm">Retry</button>
           </section>
 
-          <section class="task-group completed-group mt-3">
-            <h3 class="h6 text-uppercase text-secondary mb-2">Completed</h3>
-            <div id="completedTaskList" class="vstack gap-2"></div>
-          </section>
-
-          <p id="taskCount" class="small text-secondary text-end mb-0 mt-3"></p>
-            </div>
-          </div>
-        </section>
-
-        <aside class="col-lg-4 dashboard-sidebar" aria-labelledby="ai-label">
-          <div class="card shadow-sm">
+          <form id="quickAddForm" class="card quick-capture-card mb-3" autocomplete="off" novalidate>
             <div class="card-body">
-              <div class="d-flex align-items-center gap-2 mb-2">
-                <div>
-                  <h2 id="ai-label" class="h5 ai-panel-title mb-0">Suggested next actions</h2>
-                  <p class="small text-secondary mb-0">Helps you decide what to do next - you stay in control.</p>
+              <div class="row g-2 align-items-center">
+                <div class="col-md-6">
+                  <input id="quickTitle" class="form-control" name="title" type="text" maxlength="${MAX_TITLE_LEN}" placeholder="Add task" aria-label="Task title" />
                 </div>
-                <button id="aiRefreshBtn" type="button" class="btn btn-outline-secondary btn-sm ms-auto js-icon-btn" data-tooltip="Refresh suggestions" aria-label="Refresh suggestions">
-                  &#x21bb;
-                </button>
+                <div class="col-md-4">
+                  <select id="quickProject" class="form-select" name="projectId" aria-label="Project"></select>
+                </div>
+                <div class="col-md-2 d-grid">
+                  <button id="addBtn" type="submit" class="btn btn-primary">Add Task</button>
+                </div>
               </div>
-              <div class="mb-2">
-                <label for="aiSuggestionMode" class="form-label small mb-1">Suggestion style</label>
-                <select id="aiSuggestionMode" class="form-select form-select-sm" aria-label="Suggestion tool selector">
-                  <option value="llm" selected>Balanced recommendation</option>
-                  <option value="heuristic">Priority and due-date first</option>
-                </select>
-              </div>
-              <div id="aiFocus" class="card border-0 bg-light mb-2"></div>
-              <div id="aiOverdue" class="card border-0 bg-light mb-2"></div>
-              <div id="aiNeglected" class="card border-0 bg-light"></div>
             </div>
+            <div class="card-footer bg-body-tertiary">
+              <details class="small">
+                <summary class="text-secondary">Details</summary>
+                <div class="row g-2 mt-1">
+                  <div class="col-md-3">
+                    <label class="form-label small text-secondary mb-1" for="quickPriority">Priority</label>
+                    <select id="quickPriority" class="form-select form-select-sm" name="priority">
+                      <option value="Low">Low</option>
+                      <option value="Medium" selected>Medium</option>
+                      <option value="High">High</option>
+                      <option value="Urgent">Urgent</option>
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label small text-secondary mb-1" for="quickStatus">Status</label>
+                    <select id="quickStatus" class="form-select form-select-sm" name="status">
+                      <option value="Todo" selected>Todo</option>
+                      <option value="InProgress">In progress</option>
+                      <option value="Done">Done</option>
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label small text-secondary mb-1" for="quickDue">Due date</label>
+                    <input id="quickDue" class="form-control form-control-sm" name="dueDate" type="date" />
+                  </div>
+                  <div class="col-12">
+                    <label class="form-label small text-secondary mb-1" for="quickNote">Description / notes</label>
+                    <textarea id="quickNote" class="form-control form-control-sm" name="description" maxlength="${MAX_NOTE_LEN}" rows="2" placeholder="Optional notes"></textarea>
+                  </div>
+                </div>
+              </details>
+            </div>
+          </form>
+
+          <div class="dashboard-content row g-3 align-items-start">
+            <section id="mainPanel" class="col-lg-8 dashboard-main" aria-labelledby="tasks-label">
+              <div class="card shadow-sm main-panel-card">
+                <div class="card-body">
+                  <h2 id="tasks-label" class="visually-hidden">Tasks</h2>
+
+                  <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+                    <button id="focusModeBtn" type="button" class="btn btn-outline-primary btn-sm focus-mode-toggle" aria-pressed="false">Focus mode</button>
+                    <div class="ms-auto d-flex flex-wrap gap-2">
+                      <select id="projectFilter" class="form-select form-select-sm" aria-label="Filter by project"></select>
+                      <select id="priorityFilter" class="form-select form-select-sm" aria-label="Filter by priority"></select>
+                      <select id="statusFilter" class="form-select form-select-sm" aria-label="Filter by status"></select>
+                    </div>
+                  </div>
+
+                  <div id="message" class="small mb-2 text-secondary" role="status" aria-live="polite" aria-atomic="true"></div>
+
+                  <section class="task-group active-group mb-3">
+                    <h3 class="h6 text-uppercase text-secondary mb-2">Active</h3>
+                    <div id="activeTaskList" class="vstack gap-2"></div>
+                  </section>
+
+                  <section class="task-group completed-group mt-3">
+                    <h3 class="h6 text-uppercase text-secondary mb-2">Completed</h3>
+                    <div id="completedTaskList" class="vstack gap-2"></div>
+                  </section>
+
+                  <p id="taskCount" class="small text-secondary text-end mb-0 mt-3"></p>
+                </div>
+              </div>
+            </section>
+
+            <aside class="col-lg-4 dashboard-sidebar" aria-labelledby="ai-label">
+              <div class="card shadow-sm">
+                <div class="card-body">
+                  <div class="d-flex align-items-center gap-2 mb-2">
+                    <div>
+                      <h2 id="ai-label" class="h5 ai-panel-title mb-0">Suggested next actions</h2>
+                      <p class="small text-secondary mb-0">Helps you decide what to do next - you stay in control.</p>
+                    </div>
+                    <button id="aiRefreshBtn" type="button" class="btn btn-outline-secondary btn-sm ms-auto js-icon-btn" data-tooltip="Refresh suggestions" aria-label="Refresh suggestions">
+                      &#x21bb;
+                    </button>
+                  </div>
+                  <div class="mb-2">
+                    <label for="aiSuggestionMode" class="form-label small mb-1">Suggestion style</label>
+                    <select id="aiSuggestionMode" class="form-select form-select-sm" aria-label="Suggestion tool selector">
+                      <option value="llm" selected>Balanced recommendation</option>
+                      <option value="heuristic">Priority and due-date first</option>
+                    </select>
+                  </div>
+                  <div id="aiFocus" class="card border-0 bg-light mb-2"></div>
+                  <div id="aiNewTasks" class="card border-0 bg-light mb-2"></div>
+                  <div id="aiOverdue" class="card border-0 bg-light mb-2"></div>
+                  <div id="aiNeglected" class="card border-0 bg-light"></div>
+                </div>
+              </div>
+            </aside>
           </div>
-        </aside>
-      </div>
+        </div>
+      </section>
     </main>
 
     <div class="modal fade" id="taskModal" tabindex="-1" aria-labelledby="taskModalTitle" aria-hidden="true">
@@ -215,6 +232,8 @@ function renderAppShell() {
             <div class="modal-body">
               <label class="form-label mb-1" for="groupNameInput">Group name</label>
               <input id="groupNameInput" class="form-control" type="text" maxlength="120" placeholder="e.g., Marketing Q3" required />
+              <label class="form-label mb-1 mt-2" for="groupGoalInput">Project goal / purpose</label>
+              <textarea id="groupGoalInput" class="form-control" rows="3" maxlength="2000" placeholder="What is this project trying to achieve?" required></textarea>
             </div>
             <div class="modal-footer">
               <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
@@ -244,6 +263,7 @@ const loadFallback = document.getElementById("loadFallback");
 const fallbackText = document.getElementById("fallbackText");
 const fallbackRetryBtn = document.getElementById("fallbackRetryBtn");
 const aiFocus = document.getElementById("aiFocus");
+const aiNewTasks = document.getElementById("aiNewTasks");
 const aiOverdue = document.getElementById("aiOverdue");
 const aiNeglected = document.getElementById("aiNeglected");
 const aiRefreshBtn = document.getElementById("aiRefreshBtn");
@@ -272,6 +292,7 @@ const taskModal = taskModalEl ? new bootstrap.Modal(taskModalEl) : null;
 const groupModalEl = document.getElementById("groupModal");
 const groupModalForm = document.getElementById("groupModalForm");
 const groupNameInput = document.getElementById("groupNameInput");
+const groupGoalInput = document.getElementById("groupGoalInput");
 const groupModalSubmitBtn = document.getElementById("groupModalSubmitBtn");
 const groupModal = groupModalEl ? new bootstrap.Modal(groupModalEl) : null;
 let groupCreateTargetSelect = "quick";
@@ -436,6 +457,95 @@ function getProjectName(projectId) {
   return project ? (project.name ?? project.Name) : "Project";
 }
 
+function toProjectContext(project) {
+  return {
+    name: (project.name ?? project.Name ?? "").trim(),
+    description: (project.description ?? project.Description ?? "").trim() || null,
+    category: (project.category ?? project.Category ?? "").trim() || null,
+    goalPurpose: (project.goalPurpose ?? project.GoalPurpose ?? "").trim() || null
+  };
+}
+
+function buildAiProjectContext() {
+  return allProjects
+    .map(toProjectContext)
+    .filter((p) => p.name);
+}
+
+function inferProjectGoal(projectContexts) {
+  const explicitGoal = projectContexts.find((p) => p.goalPurpose);
+  if (explicitGoal) return explicitGoal.goalPurpose;
+  const described = projectContexts.find((p) => p.description);
+  if (described) return described.description;
+  const categories = projectContexts.map((p) => p.category).filter(Boolean);
+  if (categories.length === 0) return null;
+  const unique = [...new Set(categories)];
+  return `Main project categories: ${unique.join(", ")}.`;
+}
+
+const MAX_AI_TASK_DESC_CHARS = 800;
+
+/** Project rows relevant to the current dashboard filter (or all). */
+function buildAiProjectContextForNext() {
+  const contexts = buildAiProjectContext();
+  const filterId = projectFilter.value;
+  if (!filterId) return contexts;
+  const p = allProjects.find((x) => String(x.id ?? x.Id) === filterId);
+  if (!p) return contexts;
+  const one = toProjectContext(p);
+  return one.name ? [one] : contexts;
+}
+
+/** Prefer the filtered project's goal when a single project is selected. */
+function inferProjectGoalForNext(projectContexts) {
+  const filterId = projectFilter.value;
+  if (filterId) {
+    const p = allProjects.find((x) => String(x.id ?? x.Id) === filterId);
+    if (p) {
+      const ctx = toProjectContext(p);
+      return ctx.goalPurpose || ctx.description || inferProjectGoal(projectContexts);
+    }
+  }
+  return inferProjectGoal(projectContexts);
+}
+
+function hasMeaningfulProjectContextForAi(projectContexts) {
+  const g = inferProjectGoalForNext(projectContexts);
+  if (g && String(g).trim()) return true;
+  return projectContexts.some((p) => p.goalPurpose || p.description || p.category);
+}
+
+/** Default project when adding from AI suggestions (filter wins, else single scoped project). */
+function defaultProjectIdForAiAdds() {
+  const fid = projectFilter.value;
+  if (fid) return Number(fid);
+  const ctx = buildAiProjectContextForNext();
+  if (ctx.length === 1) {
+    const name = ctx[0].name;
+    const p = allProjects.find((x) => String(x.name ?? x.Name).trim() === name);
+    if (p) return Number(p.id ?? p.Id);
+  }
+  const q = Number(quickProject.value);
+  if (!Number.isNaN(q) && q > 0) return q;
+  const first = allProjects[0];
+  return first ? Number(first.id ?? first.Id) : 0;
+}
+
+function parseSuggestedNewTasksFromResponse(aiResponse, existingTitleKeys) {
+  const raw = Array.isArray(aiResponse.suggestedNewTasks) ? aiResponse.suggestedNewTasks : [];
+  const out = [];
+  for (const item of raw) {
+    const title = typeof item === "string" ? item.trim() : String(item?.title ?? "").trim();
+    const why = item && typeof item === "object" ? String(item.why ?? "").trim() : "";
+    if (!title) continue;
+    if (existingTitleKeys.has(titleKey(title))) continue;
+    if (out.some((x) => titleKey(x.title) === titleKey(title))) continue;
+    out.push({ title, why });
+    if (out.length >= 5) break;
+  }
+  return out;
+}
+
 function fillProjectDropdowns(projects) {
   const projectOpts = projects
     .map((p) => {
@@ -462,13 +572,16 @@ function openCreateGroupModal(target) {
   if (!groupModal) return;
   groupCreateTargetSelect = target;
   groupNameInput.value = "";
+  groupGoalInput.value = "";
   groupModal.show();
   groupNameInput.focus();
 }
 
 async function createGroupFromModal() {
   const name = groupNameInput.value.trim();
+  const goalPurpose = groupGoalInput.value.trim();
   if (!name) return setStatus("Group name is required.", "error");
+  if (!goalPurpose) return setStatus("Project goal/purpose is required.", "error");
   if (allProjects.some((p) => String(p.name ?? p.Name).trim().toLowerCase() === name.toLowerCase())) {
     return setStatus("That group already exists.", "error");
   }
@@ -482,7 +595,8 @@ async function createGroupFromModal() {
       body: JSON.stringify({
         name,
         description: null,
-        category: "Custom Group"
+        category: "Custom Group",
+        goalPurpose
       })
     });
 
@@ -605,11 +719,16 @@ function buildFallbackRationale(task) {
       : task.dueDate
         ? "It has a nearby due date."
         : "It has no due date, so priority drives ordering.";
-  return `${urgency} Priority is ${task.priority}, so this is the highest-impact next task.`;
+  const projectContexts = buildAiProjectContextForNext();
+  const hasContext = projectContexts.some((p) => p.goalPurpose || p.description || p.category);
+  const contextHint = hasContext
+    ? ""
+    : " Add project goal/purpose context when creating projects to get more tailored suggestions.";
+  return `${urgency} Priority is ${task.priority}, so this is the highest-impact next task.${contextHint}`;
 }
 
 async function refreshAiSuggestions() {
-  const activeTasks = allTasks.filter((t) => t.status !== "Done");
+  const activeTasks = getVisibleTasks().filter((t) => t.status !== "Done");
   aiState = { ...aiState, loading: true, error: "" };
   renderAiPanel();
 
@@ -620,30 +739,57 @@ async function refreshAiSuggestions() {
       error: "",
       focusSuggestion: fallback
         ? { ...fallback, rationale: buildFallbackRationale(fallback) }
-        : null
+        : null,
+      newTaskSuggestions: [],
+      emptyFocusRationale: null
     };
     renderAiPanel();
     return;
   }
 
-  if (activeTasks.length === 0) {
-    aiState = { loading: false, error: "", focusSuggestion: null };
+  const projectContexts = buildAiProjectContextForNext();
+  const projectGoal = inferProjectGoalForNext(projectContexts);
+  const hasCtx = hasMeaningfulProjectContextForAi(projectContexts);
+
+  if (activeTasks.length === 0 && !hasCtx) {
+    aiState = {
+      loading: false,
+      error: "",
+      focusSuggestion: null,
+      newTaskSuggestions: [],
+      emptyFocusRationale: null
+    };
     renderAiPanel();
     return;
   }
 
+  const existingTitleKeys = new Set(allTasks.map((t) => titleKey(t.title)));
+
   try {
+    const taskPayload =
+      activeTasks.length > 0
+        ? activeTasks.map((t) => {
+            const desc = String(t.description || "").trim();
+            return {
+              id: t.id,
+              title: t.title,
+              priority: t.priority,
+              status: t.status,
+              dueDate: t.dueDate,
+              projectId: t.projectId,
+              projectName: t.projectName || getProjectName(t.projectId),
+              description: desc ? desc.slice(0, MAX_AI_TASK_DESC_CHARS) : null
+            };
+          })
+        : [];
+
     const aiResponse = await fetchJson(`${API_BASE_URL}/api/ai/next`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        tasks: activeTasks.map((t) => ({
-          id: t.id,
-          title: t.title,
-          priority: t.priority,
-          status: t.status,
-          dueDate: t.dueDate
-        }))
+        tasks: taskPayload,
+        projectGoal,
+        projects: projectContexts
       })
     });
     const recommendedTitle = String(aiResponse.recommendedTitle || "").trim();
@@ -651,10 +797,13 @@ async function refreshAiSuggestions() {
     const recommendedTaskId = Number(aiResponse.recommendedTaskId);
     let selected = allTasks.find((t) => t.id === recommendedTaskId) || null;
     if (!selected && recommendedTitle) selected = findTaskByTitle(recommendedTitle);
+    const newTaskSuggestions = parseSuggestedNewTasksFromResponse(aiResponse, existingTitleKeys);
     aiState = {
       loading: false,
       error: "",
-      focusSuggestion: selected ? { ...selected, rationale: rationale || buildFallbackRationale(selected) } : null
+      focusSuggestion: selected ? { ...selected, rationale: rationale || buildFallbackRationale(selected) } : null,
+      newTaskSuggestions,
+      emptyFocusRationale: !selected && rationale ? rationale : null
     };
   } catch (e) {
     const fallback = [...activeTasks].sort(compareFocus)[0] || null;
@@ -663,7 +812,9 @@ async function refreshAiSuggestions() {
       error: "",
       focusSuggestion: fallback
         ? { ...fallback, rationale: buildFallbackRationale(fallback) }
-        : null
+        : null,
+      newTaskSuggestions: [],
+      emptyFocusRationale: null
     };
   }
 
@@ -671,23 +822,60 @@ async function refreshAiSuggestions() {
 }
 
 function renderAiPanel() {
-  const { focusNext, overdue, neglected } = computeSuggestions(allTasks);
-  const aiFocusSuggestion = aiState.focusSuggestion || focusNext;
+  const visibleTasks = getVisibleTasks();
+  const visibleTaskIds = new Set(visibleTasks.map((t) => t.id));
+  const { focusNext, overdue, neglected } = computeSuggestions(visibleTasks);
+  const aiFocusSuggestion =
+    aiState.focusSuggestion && visibleTaskIds.has(aiState.focusSuggestion.id)
+      ? aiState.focusSuggestion
+      : focusNext;
   const rationale = aiFocusSuggestion?.rationale || buildFallbackRationale(aiFocusSuggestion);
   const loadingHint = aiState.loading ? "<p class='small text-secondary mb-2'>Refreshing suggestions...</p>" : "";
   const errorHint = aiState.error ? `<p class="small text-danger mb-2">${escapeHtml(aiState.error)}</p>` : "";
 
-  aiFocus.innerHTML = aiFocusSuggestion
-    ? `<div class="card-body p-3"><h3 class="h6">Start here</h3>${loadingHint}${errorHint}<button type="button" class="ai-suggestion-item w-100 text-start border-0 bg-transparent p-2 mt-2 js-ai-suggestion" data-title="${escapeHtml(
-        aiFocusSuggestion.title
-      )}" data-project-id="${aiFocusSuggestion.projectId}" data-priority="${escapeHtml(aiFocusSuggestion.priority)}" data-due-date="${escapeHtml(
-        toDateInputValue(aiFocusSuggestion.dueDate)
-      )}"><p class="mb-1 task-title">${escapeHtml(aiFocusSuggestion.title)}</p><p class="small task-meta mb-1">${escapeHtml(
-        aiFocusSuggestion.projectName
-      )} - ${escapeHtml(aiFocusSuggestion.priority)} - ${escapeHtml(formatDueDate(aiFocusSuggestion.dueDate))}</p><p class="small mb-0"><strong>Why this is suggested:</strong> ${escapeHtml(
-        rationale
-      )}</p></button></div>`
-    : "<div class='card-body p-3'><h3 class='h6'>Start here</h3><p class='small text-secondary mb-0'>No active tasks right now.</p></div>";
+  const emptyNote = aiState.emptyFocusRationale ? escapeHtml(aiState.emptyFocusRationale) : "";
+  if (aiFocusSuggestion) {
+    aiFocus.innerHTML = `<div class="card-body p-3"><h3 class="h6">Start here</h3>${loadingHint}${errorHint}<button type="button" class="ai-suggestion-item w-100 text-start border-0 bg-transparent p-2 mt-2 js-ai-suggestion" data-title="${escapeHtml(
+      aiFocusSuggestion.title
+    )}" data-project-id="${aiFocusSuggestion.projectId}" data-priority="${escapeHtml(aiFocusSuggestion.priority)}" data-due-date="${escapeHtml(
+      toDateInputValue(aiFocusSuggestion.dueDate)
+    )}"><p class="mb-1 task-title">${escapeHtml(aiFocusSuggestion.title)}</p><p class="small task-meta mb-1">${escapeHtml(
+      aiFocusSuggestion.projectName
+    )} - ${escapeHtml(aiFocusSuggestion.priority)} - ${escapeHtml(formatDueDate(aiFocusSuggestion.dueDate))}</p><p class="small mb-0"><strong>Why this is suggested:</strong> ${escapeHtml(
+      rationale
+    )}</p></button></div>`;
+  } else if (aiState.loading || emptyNote) {
+    aiFocus.innerHTML = `<div class="card-body p-3"><h3 class="h6">Start here</h3>${loadingHint}${errorHint}${
+      emptyNote ? `<p class="small mb-0">${emptyNote}</p>` : "<p class='small text-secondary mb-0'>Refreshing…</p>"
+    }</div>`;
+  } else {
+    aiFocus.innerHTML =
+      "<div class='card-body p-3'><h3 class='h6'>Start here</h3><p class='small text-secondary mb-0'>No active tasks right now.</p></div>";
+  }
+
+  const addPid = defaultProjectIdForAiAdds();
+  const newList = Array.isArray(aiState.newTaskSuggestions) ? aiState.newTaskSuggestions : [];
+  if (aiNewTasks) {
+    aiNewTasks.innerHTML =
+      newList.length > 0
+        ? `<div class="card-body p-3"><h3 class="h6">Ideas to add</h3><p class="small text-secondary mb-2">Not on your list yet — click to open the add form.</p><ul class="mb-0 list-unstyled">${newList
+            .map((s) => {
+              const descParam = encodeURIComponent(s.why || "");
+              return `<li><button type="button" class="ai-suggestion-item w-100 text-start border-0 bg-transparent p-2 mt-1 js-ai-suggestion" data-title="${escapeHtml(
+                s.title
+              )}" data-project-id="${addPid}" data-priority="Medium" data-due-date="" data-desc="${descParam}"><p class="mb-0 task-title">${escapeHtml(
+                s.title
+              )}</p>${
+                s.why
+                  ? `<p class="small text-secondary mb-0 mt-1">${escapeHtml(s.why)}</p>`
+                  : ""
+              }</button></li>`;
+            })
+            .join("")}</ul></div>`
+        : `<div class="card-body p-3"><h3 class="h6">Ideas to add</h3><p class="small text-secondary mb-0">${
+            aiSuggestionMode === "llm" ? "No extra ideas this refresh." : "Switch to balanced recommendation for AI ideas."
+          }</p></div>`;
+  }
 
   aiOverdue.innerHTML = overdue.length
     ? `<div class="card-body p-3"><h3 class="h6">Due now</h3><ul class="mb-0 list-unstyled">${overdue
@@ -853,7 +1041,7 @@ async function loadDashboard(showLoading = true) {
     allTasks = [];
     fillProjectDropdowns([]);
     renderTasks();
-    aiState = { loading: false, error: "", focusSuggestion: null };
+    aiState = { loading: false, error: "", focusSuggestion: null, newTaskSuggestions: [], emptyFocusRationale: null };
   } finally {
     setListLoading(false);
     setQuickAddBusy(false);
@@ -1014,6 +1202,15 @@ function handleAiSuggestionClick(button) {
   const suggestedProjectId = Number(button.getAttribute("data-project-id"));
   const suggestedPriority = button.getAttribute("data-priority") || "Medium";
   const suggestedDueDate = button.getAttribute("data-due-date") || "";
+  const descEnc = button.getAttribute("data-desc") || "";
+  let description = "";
+  if (descEnc) {
+    try {
+      description = decodeURIComponent(descEnc);
+    } catch {
+      description = "";
+    }
+  }
 
   const existing = findTaskByTitle(title);
   if (existing) {
@@ -1021,13 +1218,15 @@ function handleAiSuggestionClick(button) {
     return;
   }
 
+  const pid = Number.isNaN(suggestedProjectId) || suggestedProjectId <= 0 ? defaultProjectIdForAiAdds() : suggestedProjectId;
+
   openTaskModal("add", {
     title,
-    projectId: Number.isNaN(suggestedProjectId) ? Number(quickProject.value) : suggestedProjectId,
+    projectId: pid,
     priority: PRIORITY_OPTIONS.includes(suggestedPriority) ? suggestedPriority : "Medium",
     status: "Todo",
     dueDate: suggestedDueDate ? new Date(`${suggestedDueDate}T00:00:00`).toISOString() : null,
-    description: ""
+    description: description || ""
   });
 }
 
@@ -1135,7 +1334,10 @@ focusModeBtn.addEventListener("click", () => {
   renderTasks();
 });
 
-projectFilter.addEventListener("change", renderTasks);
+projectFilter.addEventListener("change", () => {
+  renderTasks();
+  void refreshAiSuggestions();
+});
 priorityFilter.addEventListener("change", renderTasks);
 statusFilter.addEventListener("change", renderTasks);
 

@@ -11,6 +11,9 @@ namespace TaskDashboard.Api.Services;
 /// </summary>
 public sealed class OpenAiAiService : IAiService
 {
+    private const int MaxSuggestedNewTasks = 5;
+    private const int MaxSuggestedNewTaskTitleLength = 500;
+
     private readonly HttpClient _httpClient;
     private readonly IConfiguration _configuration;
     private readonly ILogger<OpenAiAiService> _logger;
@@ -130,6 +133,7 @@ public sealed class OpenAiAiService : IAiService
 
     public async Task<AiNextStepResult> RecommendNextAsync(
         IReadOnlyList<AiTaskSummary> tasks,
+        AiNextContext? context,
         CancellationToken cancellationToken = default)
     {
         var apiKey = GetApiKey();
@@ -138,22 +142,35 @@ public sealed class OpenAiAiService : IAiService
             return new AiNextStepResult(false, "OpenAI API key is not configured. Set OpenAI:ApiKey in appsettings, User Secrets, or environment.", null, null, null);
         }
 
-        if (tasks.Count == 0)
+        var hasContext = context?.HasMeaningfulProjectContext ?? false;
+        if (tasks.Count == 0 && !hasContext)
         {
-            return new AiNextStepResult(false, "No tasks provided.", null, null, null);
+            return new AiNextStepResult(false, "No tasks provided and no project context to infer new work from.", null, null, null);
         }
 
         var systemPrompt = """
-            You recommend ONE next task to work on from a list for a unified task dashboard.
-            Prefer: not Done; higher priority (High before Medium before Low); sooner due dates; blocked or stale work when relevant.
-            The user sends JSON: { "tasks": [ { "id", "title", "priority", "status", "dueDate" } ] }.
+            You help a unified task dashboard: (1) pick ONE next task from the user's existing list, and (2) suggest NEW tasks they have not added yet.
+            Optimize for project outcomes, not just urgency.
+            When tasks[] is non-empty: pick the best next task to work on now. Prefer not Done; alignment to project goal/purpose; higher priority; sooner due dates; overdue or stale work when relevant.
+            Each task may include projectId, projectName, description — use these to match tasks to projects[] by name/id.
+            When tasks[] is empty: set recommendedTaskId to null, recommendedTitle to "", rationale to one short sentence that you are suggesting starter tasks from project context, and suggestedNewTasks must have 3-6 concrete actionable items.
+            When tasks[] is non-empty: recommendedTitle should match one existing task title exactly when possible. suggestedNewTasks: 0-5 items that are NOT duplicates of any existing task title (case-insensitive) and that fill obvious gaps toward project goals.
+            The user sends JSON: { "tasks": [...], "projectGoal": string|null, "projects": [...], "hasMeaningfulProjectContext": boolean }.
+            If hasMeaningfulProjectContext is false: still pick from the list if non-empty; keep suggestedNewTasks short or empty; start rationale with a brief nudge to add project goal/purpose for better ideas.
             Respond with ONLY a single JSON object (no markdown, no code fences) using exactly these keys:
-            - recommendedTaskId: number or null (use the id from the list if it matches your pick; else null)
-            - recommendedTitle: string (must match one task title exactly if possible)
+            - recommendedTaskId: number or null
+            - recommendedTitle: string (empty string allowed only when tasks[] is empty)
             - rationale: string (one or two short sentences)
+            - suggestedNewTasks: array of { "title": string (max ~12 words, start with a verb when natural), "why": string (one short sentence) }
             """;
 
-        var userPayload = JsonSerializer.Serialize(new { tasks }, JsonOptions);
+        var userPayload = JsonSerializer.Serialize(new
+        {
+            tasks,
+            projectGoal = context?.ProjectGoal,
+            projects = context?.Projects ?? Array.Empty<AiProjectContext>(),
+            hasMeaningfulProjectContext = hasContext
+        }, JsonOptions);
 
         var content = await CompleteChatJsonAsync(apiKey, systemPrompt, userPayload, cancellationToken).ConfigureAwait(false);
         if (content is null)
@@ -171,18 +188,94 @@ public sealed class OpenAiAiService : IAiService
                 id = idEl.GetInt32();
             }
 
-            return new AiNextStepResult(
-                true,
-                null,
-                id,
-                root.GetProperty("recommendedTitle").GetString(),
-                root.GetProperty("rationale").GetString());
+            var recommendedTitle = root.TryGetProperty("recommendedTitle", out var titleEl) && titleEl.ValueKind == JsonValueKind.String
+                ? titleEl.GetString()
+                : null;
+            var rationale = root.TryGetProperty("rationale", out var ratEl) && ratEl.ValueKind == JsonValueKind.String
+                ? ratEl.GetString()
+                : null;
+
+            var suggested = ParseAndDedupeSuggestedNewTasks(root, tasks);
+
+            return new AiNextStepResult(true, null, id, recommendedTitle, rationale, suggested);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to parse next-step JSON: {Content}", content);
             return new AiNextStepResult(false, "Could not parse AI response as expected JSON.", null, null, null);
         }
+    }
+
+    private static IReadOnlyList<AiSuggestedNewTask> ParseAndDedupeSuggestedNewTasks(JsonElement root, IReadOnlyList<AiTaskSummary> existingTasks)
+    {
+        var existingTitles = new HashSet<string>(
+            existingTasks.Select(t => t.Title.Trim()).Where(s => s.Length > 0),
+            StringComparer.OrdinalIgnoreCase);
+
+        if (!root.TryGetProperty("suggestedNewTasks", out var arr) || arr.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<AiSuggestedNewTask>();
+        }
+
+        var list = new List<AiSuggestedNewTask>();
+        foreach (var el in arr.EnumerateArray())
+        {
+            if (list.Count >= MaxSuggestedNewTasks)
+            {
+                break;
+            }
+
+            string? title = null;
+            string? why = null;
+            if (el.ValueKind == JsonValueKind.String)
+            {
+                title = el.GetString();
+            }
+            else if (el.ValueKind == JsonValueKind.Object)
+            {
+                if (el.TryGetProperty("title", out var tEl) && tEl.ValueKind == JsonValueKind.String)
+                {
+                    title = tEl.GetString();
+                }
+
+                if (el.TryGetProperty("why", out var wEl) && wEl.ValueKind == JsonValueKind.String)
+                {
+                    why = wEl.GetString();
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                continue;
+            }
+
+            var trimmed = title.Trim();
+            if (trimmed.Length > MaxSuggestedNewTaskTitleLength)
+            {
+                trimmed = trimmed[..MaxSuggestedNewTaskTitleLength];
+            }
+
+            if (existingTitles.Contains(trimmed))
+            {
+                continue;
+            }
+
+            if (list.Any(x => string.Equals(x.Title, trimmed, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            existingTitles.Add(trimmed);
+            why = string.IsNullOrWhiteSpace(why) ? null : why.Trim();
+            if (why is { Length: > 400 })
+            {
+                why = why[..400];
+            }
+
+            list.Add(new AiSuggestedNewTask(trimmed, why));
+        }
+
+        return list;
     }
 
     private string? GetApiKey() => _configuration["OpenAI:ApiKey"];

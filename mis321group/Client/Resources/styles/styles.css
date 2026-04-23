@@ -1,14 +1,17 @@
 :root {
-  --bg: #f5f7fb;
+  --bg: #f3f5f9;
   --surface: #ffffff;
-  --surface-soft: #f8fafc;
-  --border: #dbe3ee;
-  --text: #1f2937;
-  --muted: #6b7280;
-  --accent: #3f6ea8;
-  --accent-soft: #e9f1fb;
+  --surface-soft: #f7f9fd;
+  --border: #dde3ef;
+  --text: #20263a;
+  --muted: #6a748f;
+  --accent: #2f5ea8;
+  --accent-soft: #e6eefc;
   --danger: #b94a48;
   --success: #2f8a5c;
+  --sidebar-bg: #081b5f;
+  --sidebar-text: #c7d2ef;
+  --sidebar-text-strong: #ffffff;
 }
 
 * {
@@ -22,16 +25,123 @@ body {
 
 body {
   margin: 0;
-  font-family: "Inter", sans-serif;
+  font-family: "Lato", sans-serif;
   background: var(--bg);
   color: var(--text);
-  overflow: hidden;
+  overflow-y: auto;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.dashboard-title,
+.task-title,
+.ai-panel-title {
+  font-family: "Lato", sans-serif;
 }
 
 #app {
-  height: 100vh;
+  min-height: 100vh;
   overflow-y: auto;
-  padding: 14px;
+}
+
+.app-layout {
+  display: grid;
+  grid-template-columns: 236px 1fr;
+  min-height: 100vh;
+}
+
+.project-sidebar {
+  background: var(--sidebar-bg);
+  color: var(--sidebar-text);
+  padding: 1rem 0.9rem;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sidebar-brand {
+  color: var(--sidebar-text-strong);
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.sidebar-link {
+  color: var(--sidebar-text);
+  text-decoration: none;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  font-size: 0.95rem;
+}
+
+.sidebar-link:hover {
+  color: var(--sidebar-text-strong);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.sidebar-link.is-active {
+  color: var(--sidebar-text-strong);
+  background: rgba(86, 130, 230, 0.35);
+}
+
+.workspace-shell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.workspace-topbar {
+  background: #fff;
+  border-bottom: 1px solid var(--border);
+  padding: 0.85rem 1.25rem 0.55rem;
+}
+
+.workspace-topbar-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.65rem;
+}
+
+.dashboard-title {
+  font-size: 1.25rem;
+}
+
+.dashboard-subtitle {
+  font-size: 0.92rem;
+}
+
+.workspace-tabs {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 0.45rem;
+}
+
+.workspace-tab {
+  color: #4f5f82;
+  font-size: 0.93rem;
+  font-weight: 600;
+  padding-bottom: 0.25rem;
+  border-bottom: 2px solid transparent;
+}
+
+.workspace-tab.is-active {
+  color: #18356f;
+  border-bottom-color: #18356f;
+}
+
+.workspace-content {
+  overflow: visible;
+  padding: 1rem 1.25rem 1.25rem;
 }
 
 .dashboard-shell {
@@ -39,17 +149,9 @@ body {
   margin: 0 auto;
 }
 
-.dashboard-header {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 0.75rem 1rem;
-}
-
 .dashboard-title {
   margin: 0;
   font-weight: 700;
-  letter-spacing: -0.01em;
 }
 
 .dashboard-subtitle {
@@ -58,8 +160,8 @@ body {
 
 .card {
   border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(20, 30, 40, 0.05) !important;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(19, 32, 62, 0.06) !important;
 }
 
 .quick-capture-card .card-body {
@@ -77,7 +179,7 @@ body {
 
 .task-group {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 0.75rem;
   background: #fff;
 }
@@ -93,7 +195,12 @@ body {
 .task-card {
   border: 1px solid var(--border);
   background: var(--surface);
-  transition: border-color 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.task-card:hover {
+  border-color: #c5d1e8;
+  box-shadow: 0 3px 8px rgba(22, 39, 76, 0.06);
 }
 
 .task-card .card-body {
@@ -105,8 +212,8 @@ body {
 }
 
 .task-title {
-  font-size: 0.97rem;
-  font-weight: 600;
+  font-size: 1rem;
+  font-weight: 700;
   color: var(--text);
 }
 
@@ -184,6 +291,7 @@ body {
 .btn-primary {
   background: var(--accent);
   border-color: var(--accent);
+  font-weight: 600;
 }
 
 .btn-primary:hover,
@@ -239,9 +347,22 @@ body {
   }
 
   #app {
-    height: auto;
+    min-height: auto;
     overflow: visible;
-    padding: 10px;
+  }
+
+  .app-layout {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .project-sidebar {
+    display: none;
+  }
+
+  .workspace-content {
+    overflow: visible;
+    padding: 0.8rem;
   }
 
   .dashboard-sidebar {

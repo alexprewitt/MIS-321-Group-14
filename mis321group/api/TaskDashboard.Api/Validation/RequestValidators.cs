@@ -9,8 +9,9 @@ public static class RequestValidators
     public const int MaxTaskDescriptionLength = 4000;
     public const int MaxProjectNameLength = 200;
     public const int MaxProjectCategoryLength = 100;
+    public const int MaxProjectGoalPurposeLength = 2000;
 
-    public static string? ValidateProjectBody(string? name, string? category, bool categoryRequired)
+    public static string? ValidateProjectBody(string? name, string? category, string? goalPurpose, bool categoryRequired)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
@@ -30,6 +31,16 @@ public static class RequestValidators
         if (!string.IsNullOrWhiteSpace(category) && category.Trim().Length > MaxProjectCategoryLength)
         {
             return $"Category must be at most {MaxProjectCategoryLength} characters.";
+        }
+
+        if (string.IsNullOrWhiteSpace(goalPurpose))
+        {
+            return "GoalPurpose is required.";
+        }
+
+        if (goalPurpose.Trim().Length > MaxProjectGoalPurposeLength)
+        {
+            return $"GoalPurpose must be at most {MaxProjectGoalPurposeLength} characters.";
         }
 
         return null;

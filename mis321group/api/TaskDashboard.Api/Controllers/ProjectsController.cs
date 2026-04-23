@@ -16,7 +16,7 @@ public class ProjectsController(SqlConnectionFactory connectionFactory) : Contro
         await conn.OpenAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT Id, Name, Description, Category
+            SELECT Id, Name, Description, Category, GoalPurpose
             FROM Projects
             ORDER BY Name;
             """;
@@ -25,12 +25,14 @@ public class ProjectsController(SqlConnectionFactory connectionFactory) : Contro
         while (await reader.ReadAsync())
         {
             var descriptionOrdinal = reader.GetOrdinal("Description");
+            var goalPurposeOrdinal = reader.GetOrdinal("GoalPurpose");
             projects.Add(new
             {
                 Id = reader.GetInt32("Id"),
                 Name = reader.GetString("Name"),
                 Description = reader.IsDBNull(descriptionOrdinal) ? null : reader.GetString("Description"),
-                Category = reader.GetString("Category")
+                Category = reader.GetString("Category"),
+                GoalPurpose = reader.IsDBNull(goalPurposeOrdinal) ? null : reader.GetString("GoalPurpose")
             });
         }
 
@@ -45,7 +47,7 @@ public class ProjectsController(SqlConnectionFactory connectionFactory) : Contro
             return BadRequest(new { error = "Request body is required." });
         }
 
-        var err = RequestValidators.ValidateProjectBody(request.Name, request.Category, categoryRequired: true);
+        var err = RequestValidators.ValidateProjectBody(request.Name, request.Category, request.GoalPurpose, categoryRequired: true);
         if (err is not null)
         {
             return BadRequest(new { error = err });
@@ -57,14 +59,15 @@ public class ProjectsController(SqlConnectionFactory connectionFactory) : Contro
             await conn.OpenAsync();
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = """
-                INSERT INTO Projects (Name, Description, Category)
-                VALUES (@name, @description, @category);
+                INSERT INTO Projects (Name, Description, Category, GoalPurpose)
+                VALUES (@name, @description, @category, @goalPurpose);
                 SELECT LAST_INSERT_ID();
                 """;
             cmd.Parameters.AddWithValue("@name", request.Name!.Trim());
             cmd.Parameters.AddWithValue("@description",
                 string.IsNullOrWhiteSpace(request.Description) ? DBNull.Value : request.Description.Trim());
             cmd.Parameters.AddWithValue("@category", request.Category!.Trim());
+            cmd.Parameters.AddWithValue("@goalPurpose", request.GoalPurpose!.Trim());
 
             var newId = Convert.ToInt32(await cmd.ExecuteScalarAsync());
 
@@ -73,7 +76,8 @@ public class ProjectsController(SqlConnectionFactory connectionFactory) : Contro
                 Id = newId,
                 Name = request.Name.Trim(),
                 Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
-                Category = request.Category.Trim()
+                Category = request.Category.Trim(),
+                GoalPurpose = request.GoalPurpose.Trim()
             });
         }
         catch (Exception)
@@ -90,7 +94,7 @@ public class ProjectsController(SqlConnectionFactory connectionFactory) : Contro
             return BadRequest(new { error = "Request body is required." });
         }
 
-        var err = RequestValidators.ValidateProjectBody(request.Name, request.Category, categoryRequired: true);
+        var err = RequestValidators.ValidateProjectBody(request.Name, request.Category, request.GoalPurpose, categoryRequired: true);
         if (err is not null)
         {
             return BadRequest(new { error = err });
@@ -103,7 +107,7 @@ public class ProjectsController(SqlConnectionFactory connectionFactory) : Contro
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = """
                 UPDATE Projects
-                SET Name = @name, Description = @description, Category = @category
+                SET Name = @name, Description = @description, Category = @category, GoalPurpose = @goalPurpose
                 WHERE Id = @id;
                 """;
             cmd.Parameters.AddWithValue("@id", id);
@@ -111,6 +115,7 @@ public class ProjectsController(SqlConnectionFactory connectionFactory) : Contro
             cmd.Parameters.AddWithValue("@description",
                 string.IsNullOrWhiteSpace(request.Description) ? DBNull.Value : request.Description.Trim());
             cmd.Parameters.AddWithValue("@category", request.Category!.Trim());
+            cmd.Parameters.AddWithValue("@goalPurpose", request.GoalPurpose!.Trim());
 
             var changed = await cmd.ExecuteNonQueryAsync();
             if (changed == 0)
@@ -123,7 +128,8 @@ public class ProjectsController(SqlConnectionFactory connectionFactory) : Contro
                 Id = id,
                 Name = request.Name.Trim(),
                 Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
-                Category = request.Category.Trim()
+                Category = request.Category.Trim(),
+                GoalPurpose = request.GoalPurpose.Trim()
             });
         }
         catch (Exception)
@@ -160,5 +166,6 @@ public class ProjectsController(SqlConnectionFactory connectionFactory) : Contro
         public string Name { get; set; } = string.Empty;
         public string? Description { get; set; }
         public string Category { get; set; } = string.Empty;
+        public string GoalPurpose { get; set; } = string.Empty;
     }
 }

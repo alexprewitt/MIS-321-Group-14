@@ -68,8 +68,20 @@ static async Task EnsureDatabaseAsync(IServiceProvider services)
               Id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
               Name VARCHAR(200) NOT NULL,
               Description TEXT NULL,
-              Category VARCHAR(100) NOT NULL
+              Category VARCHAR(100) NOT NULL,
+              GoalPurpose TEXT NULL
             );
+            """;
+        const string hasGoalPurposeSql = """
+            SELECT COUNT(1)
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'Projects'
+              AND COLUMN_NAME = 'GoalPurpose';
+            """;
+        const string alterProjectsSql = """
+            ALTER TABLE Projects
+            ADD COLUMN GoalPurpose TEXT NULL;
             """;
         const string createTasksSql = """
             CREATE TABLE IF NOT EXISTS Tasks (
@@ -101,12 +113,12 @@ static async Task EnsureDatabaseAsync(IServiceProvider services)
             SET UpdatedAt = CreatedAt;
             """;
         const string seedProjectsSql = """
-            INSERT INTO Projects (Id, Name, Description, Category)
-            SELECT 1, 'School MIS321', 'Group coursework and personal progress tracking.', 'Education'
+            INSERT INTO Projects (Id, Name, Description, Category, GoalPurpose)
+            SELECT 1, 'School MIS321', 'Group coursework and personal progress tracking.', 'Education', 'Ship core MIS321 group deliverables on time with clear ownership.'
             WHERE NOT EXISTS (SELECT 1 FROM Projects WHERE Id = 1);
 
-            INSERT INTO Projects (Id, Name, Description, Category)
-            SELECT 2, 'Personal Admin', 'Small ongoing tasks to keep life running smoothly.', 'Personal'
+            INSERT INTO Projects (Id, Name, Description, Category, GoalPurpose)
+            SELECT 2, 'Personal Admin', 'Small ongoing tasks to keep life running smoothly.', 'Personal', 'Keep personal operations predictable and low-stress week to week.'
             WHERE NOT EXISTS (SELECT 1 FROM Projects WHERE Id = 2);
             """;
         const string seedTasksSql = """
@@ -126,6 +138,16 @@ static async Task EnsureDatabaseAsync(IServiceProvider services)
         await using var createProjects = conn.CreateCommand();
         createProjects.CommandText = createProjectsSql;
         await createProjects.ExecuteNonQueryAsync();
+
+        await using var hasGoalPurpose = conn.CreateCommand();
+        hasGoalPurpose.CommandText = hasGoalPurposeSql;
+        var goalPurposeExists = Convert.ToInt32(await hasGoalPurpose.ExecuteScalarAsync()) > 0;
+        if (!goalPurposeExists)
+        {
+            await using var alterProjects = conn.CreateCommand();
+            alterProjects.CommandText = alterProjectsSql;
+            await alterProjects.ExecuteNonQueryAsync();
+        }
 
         await using var createTasks = conn.CreateCommand();
         createTasks.CommandText = createTasksSql;
