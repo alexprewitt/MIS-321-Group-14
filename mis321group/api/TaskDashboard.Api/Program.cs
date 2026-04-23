@@ -1,5 +1,12 @@
 using TaskDashboard.Api.Infrastructure.Data;
 using TaskDashboard.Api.Services;
+using DotNetEnv;
+
+var envPath = Path.Combine(Directory.GetCurrentDirectory(), ".env");
+if (File.Exists(envPath))
+{
+    Env.Load(envPath);
+}
 
 var builder = WebApplication.CreateBuilder(args);
 

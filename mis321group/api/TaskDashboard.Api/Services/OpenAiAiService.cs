@@ -151,6 +151,10 @@ public sealed class OpenAiAiService : IAiService
         var systemPrompt = """
             You help a unified task dashboard: (1) pick ONE next task from the user's existing list, and (2) suggest NEW tasks they have not added yet.
             Optimize for project outcomes, not just urgency.
+            Always reason by project group first:
+            1) Group tasks[] by projectName (or "Ungrouped" if missing).
+            2) For each group, read task titles + descriptions to infer missing work.
+            3) Suggest new tasks that clearly belong to a specific group.
             When tasks[] is non-empty: pick the best next task to work on now. Prefer not Done; alignment to project goal/purpose; higher priority; sooner due dates; overdue or stale work when relevant.
             Each task may include projectId, projectName, description — use these to match tasks to projects[] by name/id.
             When tasks[] is empty: set recommendedTaskId to null, recommendedTitle to "", rationale to one short sentence that you are suggesting starter tasks from project context, and suggestedNewTasks must have 3-6 concrete actionable items.
@@ -161,7 +165,7 @@ public sealed class OpenAiAiService : IAiService
             - recommendedTaskId: number or null
             - recommendedTitle: string (empty string allowed only when tasks[] is empty)
             - rationale: string (one or two short sentences)
-            - suggestedNewTasks: array of { "title": string (max ~12 words, start with a verb when natural), "why": string (one short sentence) }
+            - suggestedNewTasks: array of { "title": string (max ~12 words, start with a verb when natural), "why": string (one short sentence), "projectName": string (must match a known project/group when possible) }
             """;
 
         var userPayload = JsonSerializer.Serialize(new
@@ -227,6 +231,7 @@ public sealed class OpenAiAiService : IAiService
 
             string? title = null;
             string? why = null;
+            string? projectName = null;
             if (el.ValueKind == JsonValueKind.String)
             {
                 title = el.GetString();
@@ -241,6 +246,11 @@ public sealed class OpenAiAiService : IAiService
                 if (el.TryGetProperty("why", out var wEl) && wEl.ValueKind == JsonValueKind.String)
                 {
                     why = wEl.GetString();
+                }
+
+                if (el.TryGetProperty("projectName", out var pEl) && pEl.ValueKind == JsonValueKind.String)
+                {
+                    projectName = pEl.GetString();
                 }
             }
 
@@ -272,7 +282,13 @@ public sealed class OpenAiAiService : IAiService
                 why = why[..400];
             }
 
-            list.Add(new AiSuggestedNewTask(trimmed, why));
+            projectName = string.IsNullOrWhiteSpace(projectName) ? null : projectName.Trim();
+            if (projectName is { Length: > 200 })
+            {
+                projectName = projectName[..200];
+            }
+
+            list.Add(new AiSuggestedNewTask(trimmed, why, projectName));
         }
 
         return list;
@@ -281,6 +297,8 @@ public sealed class OpenAiAiService : IAiService
     private string? GetApiKey() => _configuration["OpenAI:ApiKey"];
 
     private string? GetModel() => _configuration["OpenAI:Model"] ?? "gpt-4o-mini";
+
+    private string GetBaseUrl() => (_configuration["OpenAI:BaseUrl"] ?? "https://api.openai.com/v1").TrimEnd('/');
 
     /// <summary>
     /// Sends chat completion request with JSON response format; returns parsed message content (JSON string).
@@ -304,7 +322,7 @@ public sealed class OpenAiAiService : IAiService
             temperature = 0.3
         };
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/chat/completions");
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{GetBaseUrl()}/chat/completions");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         request.Content = new StringContent(JsonSerializer.Serialize(requestBody, JsonOptions), Encoding.UTF8, "application/json");
 

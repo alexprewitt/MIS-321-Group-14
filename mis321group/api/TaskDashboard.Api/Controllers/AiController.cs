@@ -148,7 +148,7 @@ public class AiController(IAiService aiService) : ControllerBase
         }
 
         var suggestedNewTasks = (result.SuggestedNewTasks ?? Array.Empty<AiSuggestedNewTask>())
-            .Select(s => new { title = s.Title, why = s.Why })
+            .Select(s => new { title = s.Title, why = s.Why, projectName = s.ProjectName })
             .ToList();
 
         return Ok(new

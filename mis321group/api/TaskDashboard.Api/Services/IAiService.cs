@@ -40,7 +40,7 @@ public sealed record AiCategorizeResult(bool Success, string? Error, string? Sug
 
 public sealed record AiBreakdownResult(bool Success, string? Error, IReadOnlyList<string> Subtasks);
 
-public sealed record AiSuggestedNewTask(string Title, string? Why);
+public sealed record AiSuggestedNewTask(string Title, string? Why, string? ProjectName = null);
 
 public sealed record AiNextStepResult(
     bool Success,
