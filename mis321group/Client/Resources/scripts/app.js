@@ -531,16 +531,23 @@ function defaultProjectIdForAiAdds() {
   return first ? Number(first.id ?? first.Id) : 0;
 }
 
+function findProjectByName(projectName) {
+  const key = String(projectName || "").trim().toLowerCase();
+  if (!key) return null;
+  return allProjects.find((p) => String(p.name ?? p.Name).trim().toLowerCase() === key) || null;
+}
+
 function parseSuggestedNewTasksFromResponse(aiResponse, existingTitleKeys) {
   const raw = Array.isArray(aiResponse.suggestedNewTasks) ? aiResponse.suggestedNewTasks : [];
   const out = [];
   for (const item of raw) {
     const title = typeof item === "string" ? item.trim() : String(item?.title ?? "").trim();
     const why = item && typeof item === "object" ? String(item.why ?? "").trim() : "";
+    const projectName = item && typeof item === "object" ? String(item.projectName ?? "").trim() : "";
     if (!title) continue;
     if (existingTitleKeys.has(titleKey(title))) continue;
     if (out.some((x) => titleKey(x.title) === titleKey(title))) continue;
-    out.push({ title, why });
+    out.push({ title, why, projectName });
     if (out.length >= 5) break;
   }
   return out;
@@ -860,12 +867,21 @@ function renderAiPanel() {
       newList.length > 0
         ? `<div class="card-body p-3"><h3 class="h6">Ideas to add</h3><p class="small text-secondary mb-2">Not on your list yet — click to open the add form.</p><ul class="mb-0 list-unstyled">${newList
             .map((s) => {
+              const mappedProject = findProjectByName(s.projectName);
+              const suggestionProjectId = mappedProject ? Number(mappedProject.id ?? mappedProject.Id) : addPid;
+              const suggestionProjectName = mappedProject
+                ? String(mappedProject.name ?? mappedProject.Name)
+                : (s.projectName || "");
               const descParam = encodeURIComponent(s.why || "");
               return `<li><button type="button" class="ai-suggestion-item w-100 text-start border-0 bg-transparent p-2 mt-1 js-ai-suggestion" data-title="${escapeHtml(
                 s.title
-              )}" data-project-id="${addPid}" data-priority="Medium" data-due-date="" data-desc="${descParam}"><p class="mb-0 task-title">${escapeHtml(
+              )}" data-project-id="${suggestionProjectId}" data-priority="Medium" data-due-date="" data-desc="${descParam}"><p class="mb-0 task-title">${escapeHtml(
                 s.title
               )}</p>${
+                suggestionProjectName
+                  ? `<p class="small text-secondary mb-0 mt-1"><strong>Group:</strong> ${escapeHtml(suggestionProjectName)}</p>`
+                  : ""
+              }${
                 s.why
                   ? `<p class="small text-secondary mb-0 mt-1">${escapeHtml(s.why)}</p>`
                   : ""

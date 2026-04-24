@@ -33,10 +33,16 @@ builder.Services.AddCors(options =>
         }
         else
         {
+            var fromConfig = builder.Configuration["Cors:AllowedOrigins"]?
+                .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                ?? Array.Empty<string>();
+            var defaults = new[] { "http://127.0.0.1:5500", "http://localhost:5500" };
+            var origins = defaults.Concat(fromConfig)
+                .Where(static o => !string.IsNullOrWhiteSpace(o))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
             policy
-                .WithOrigins(
-                    "http://127.0.0.1:5500",
-                    "http://localhost:5500")
+                .WithOrigins(origins)
                 .AllowAnyHeader()
                 .AllowAnyMethod();
         }
@@ -56,6 +62,8 @@ if (!app.Environment.IsDevelopment())
 }
 app.UseCors("FrontendClient");
 app.MapControllers();
+// Browsers only hit `/`; the API has no static site — send them to a real endpoint.
+app.MapGet("/", () => Results.Redirect("/api/health", permanent: false));
 
 app.Run();
 

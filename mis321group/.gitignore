@@ -16,6 +16,9 @@
 # Secrets (never commit keys)
 **/appsettings.*.local.json
 secrets.json
+**/.env
+**/.env.*
+!**/.env.example
 
 # OS
 Thumbs.db

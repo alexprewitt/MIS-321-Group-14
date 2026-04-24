@@ -1,0 +1,25 @@
+# Publishes mis321group/Client to the gh-pages branch.
+# In GitHub: Settings → Pages → Build and deployment → Source: "Deploy from a branch" → branch gh-pages, folder /(root)
+name: Deploy client to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish client folder to gh-pages branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./mis321group/Client
+          force_orphan: true
+          user_name: github-actions[bot]
+          user_email: github-actions[bot]@users.noreply.github.com
